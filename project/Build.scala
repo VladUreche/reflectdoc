@@ -39,8 +39,8 @@ object reflectdocBuild extends Build {
     libraryDependencies ++= 
       Seq(
         "org.scalareflect" %% "core" % "0.1.0-SNAPSHOT",
-        "org.scalareflect" %% "scalahost-runtime" % "0.1.0-SNAPSHOT" cross CrossVersion.full,
-        "org.scala-lang" % "scala-compiler" % scalaVersion.value
+        "org.scalareflect" %% "scalahost-runtime" % "0.1.0-SNAPSHOT" cross CrossVersion.full
+        // "org.scala-lang" % "scala-compiler" % scalaVersion.value
       )
   )
 
