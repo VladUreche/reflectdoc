@@ -59,7 +59,7 @@ class Template(universe: doc.Universe, generator: DiagramGenerator, tpl: DocTemp
               anchor_opt = '@' + anchor.substring(1);
             window.location.href = url + '#' + hash + anchor_opt;
          }}
-   	  </script>
+       </script>
     </xml:group>
 
   val valueMembers =
@@ -536,7 +536,7 @@ class Template(universe: doc.Universe, generator: DiagramGenerator, tpl: DocTemp
       case dtpl: DocTemplateEntity if (isSelf && dtpl.sourceUrl.isDefined && dtpl.inSource.isDefined && !isReduced) =>
         val (absFile, _) = dtpl.inSource.get
         <dt>Source</dt>
-        <dd>{ <a href={ dtpl.sourceUrl.get.toString } target="_blank">{ Text(absFile.file.getName) }</a> }</dd>
+        <dd>{ <a href={ dtpl.sourceUrl.get.toString } target="_blank">{ Text(absFile.getName) }</a> }</dd>
       case _ => NodeSeq.Empty
     }
 
@@ -570,7 +570,7 @@ class Template(universe: doc.Universe, generator: DiagramGenerator, tpl: DocTemp
                  exampleXml.reduceLeft(_ ++ Text(", ") ++ _)
               }</ol>
             </div>
-	  }
+    }
 
         val version: NodeSeq =
           orEmpty(comment.version) {

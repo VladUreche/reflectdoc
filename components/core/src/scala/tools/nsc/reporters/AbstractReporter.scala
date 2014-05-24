@@ -7,14 +7,12 @@ package scala.tools.nsc
 package reporters
 
 import scala.collection.mutable
-import scala.tools.nsc.Settings
 import scala.reflect.internal.util.Position
 
 /**
  * This reporter implements filtering.
  */
 abstract class AbstractReporter extends Reporter {
-  val settings: Settings
   def display(pos: Position, msg: String, severity: Severity): Unit
   def displayPrompt(): Unit
 
@@ -27,9 +25,9 @@ abstract class AbstractReporter extends Reporter {
     messages.clear()
   }
 
-  private def isVerbose   = settings.verbose.value
-  private def noWarnings  = settings.nowarnings.value
-  private def isPromptSet = settings.prompt.value
+  private def isVerbose   = false
+  private def noWarnings  = false
+  private def isPromptSet = false
 
   protected def info0(pos: Position, msg: String, severity: Severity, force: Boolean) {
     if (severity == INFO) {
@@ -45,10 +43,6 @@ abstract class AbstractReporter extends Reporter {
         if (!hidden || isPromptSet) {
           severity.count += 1
           display(pos, msg, severity)
-        }
-        else if (settings.debug) {
-          severity.count += 1
-          display(pos, "[ suppressed ] " + msg, severity)
         }
 
         if (isPromptSet)

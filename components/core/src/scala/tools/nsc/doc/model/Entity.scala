@@ -11,6 +11,7 @@ package model
 import scala.collection._
 import base.comment._
 import diagram._
+import java.io.File
 
 /** An entity in a Scaladoc universe. Entities are declarations in the program and correspond to symbols in the
   * compiler. Entities model the following Scala concepts:
@@ -244,7 +245,7 @@ trait DocTemplateEntity extends MemberTemplateEntity {
 
   /** The source file in which the current template is defined and the line where the definition starts, if they exist.
     * A source file exists for all templates, except for those that are generated synthetically by Scaladoc. */
-  def inSource: Option[(io.AbstractFile, Int)]
+  def inSource: Option[(File, Int)]
 
   /** An HTTP address at which the source of this template is available, if it is available. An address is available
     * only if the `docsourceurl` setting has been set. */

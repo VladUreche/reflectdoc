@@ -8,11 +8,12 @@ package doc
 
 import java.io.File
 import scala.language.postfixOps
+import org.scalareflect.reflectdoc.SettingsMock
 
 /** An extended version of compiler settings, with additional Scaladoc-specific options.
   * @param error A function that prints a string to the appropriate error stream
   * @param printMsg A function that prints the string, without any extra boilerplate of error */
-class Settings(error: String => Unit, val printMsg: String => Unit = println(_)) extends scala.tools.nsc.Settings(error) {
+class Settings(error: String => Unit, val printMsg: String => Unit = println(_)) extends SettingsMock(error) {
 
   /** A setting that defines in which format the documentation is output. ''Note:'' this setting is currently always
     * `html`. */
@@ -56,11 +57,6 @@ class Settings(error: String => Unit, val printMsg: String => Unit = println(_))
     ""
   )
 
-  lazy val uncompilableFiles = docUncompilable.value match {
-    case ""     => Nil
-    case path   => io.Directory(path).deepFiles filter (_ hasExtension "scala") toList
-  }
-
   /** A setting that defines a URL to be concatenated with source locations and show a link to source files.
    * If needed the sourcepath option can be used to exclude undesired initial part of the link to sources */
   val docsourceurl = StringSetting (
@@ -88,9 +84,10 @@ class Settings(error: String => Unit, val printMsg: String => Unit = println(_))
     "scala.tools.nsc.doc.html.Doclet"
   )
 
-  val docRootContent = PathSetting (
+  val docRootContent = StringSetting (
     "-doc-root-content",
     "The file from which the root package documentation should be imported.",
+    "<path>",
     ""
   )
 
@@ -117,7 +114,7 @@ class Settings(error: String => Unit, val printMsg: String => Unit = println(_))
   )
 
   val docImplicitsHide = MultiStringSetting (
-	  "-implicits-hide",
+    "-implicits-hide",
     "implicit(s)",
     "Hide the members inherited by the given comma separated, fully qualified implicit conversions. Add dot (.) to include default conversions."
   )
@@ -137,8 +134,9 @@ class Settings(error: String => Unit, val printMsg: String => Unit = println(_))
     "Show debugging information for the diagram creation process."
   )
 
-  val docDiagramsDotPath = PathSetting (
+  val docDiagramsDotPath = StringSetting (
     "-diagrams-dot-path",
+    "<path>",
     "The path to the dot executable used to generate the inheritance diagrams. Eg: /usr/bin/dot",
     "dot" // by default, just pick up the system-wide dot
   )
@@ -207,6 +205,13 @@ class Settings(error: String => Unit, val printMsg: String => Unit = println(_))
   val docGroups = BooleanSetting (
     "-groups",
     "Group similar functions together (based on the @group annotation)"
+  )
+
+  val outdir = StringSetting (
+    "-o",
+    "Where to output the scaladoc API website.",
+    "<path>",
+    "."
   )
 
   // For improved help output.
