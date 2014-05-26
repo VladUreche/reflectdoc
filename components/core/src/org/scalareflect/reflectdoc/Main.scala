@@ -1,8 +1,9 @@
 package org.scalareflect.reflectdoc
 
-import scala.tools.nsc.doc._
+import reflectdoc.tools.nsc.doc._
+import reflectdoc.tools.nsc.doc.model.TemplateEntity
+
 import scala.reflect.semantic.HostContext
-import scala.tools.nsc.doc.model.TemplateEntity
 
 object ReflectDoc {
 
