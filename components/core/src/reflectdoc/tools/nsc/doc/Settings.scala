@@ -15,6 +15,9 @@ import org.scalareflect.reflectdoc.SettingsMock
   * @param printMsg A function that prints the string, without any extra boilerplate of error */
 class Settings(error: String => Unit, val printMsg: String => Unit = println(_)) extends SettingsMock(error) {
 
+  val debug = BooleanSetting("-Ydebug", "enable debugging output")
+  def Ydocdebug = debug
+
   /** A setting that defines in which format the documentation is output. ''Note:'' this setting is currently always
     * `html`. */
   val docformat = ChoiceSetting (
