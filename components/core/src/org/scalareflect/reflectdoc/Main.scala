@@ -26,7 +26,7 @@ object ReflectDoc {
     }
 
     val host = createReflectionHost(docSettings)
-    try { new DocFactory(host, reporter, docSettings).document()}
+    try { new DocFactory(host, reporter, docSettings).document() }
     catch {
       case ex @ FatalError(msg) =>
         if (docSettings.debug.value) ex.printStackTrace()
