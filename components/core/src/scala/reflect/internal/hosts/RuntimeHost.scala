@@ -1,4 +1,6 @@
-package orscalareflect.runtimehost
+package scala.reflect
+package internal
+package hosts
 
 import scala.reflect.{ core => p }
 import scala.reflect.semantic._

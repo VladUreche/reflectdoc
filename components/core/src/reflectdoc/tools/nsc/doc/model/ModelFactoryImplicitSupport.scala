@@ -59,6 +59,8 @@ trait ModelFactoryImplicitSupport {
   @inline final def debug(msg: => String) = if (DEBUG) settings.printMsg(msg)
   @inline final def error(msg: => String) = if (ERROR) settings.printMsg(msg)
 
+  type ImplicitConversionImpl = ImplicitConversion
+
 //  /** This is a flag that indicates whether to eliminate implicits that cannot be satisfied within the current scope.
 //   * For example, if an implicit conversion requires that there is a Numeric[T] in scope:
 //   *  {{{

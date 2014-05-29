@@ -17,6 +17,7 @@ class Settings(error: String => Unit, val printMsg: String => Unit = println(_))
 
   val debug = BooleanSetting("-Ydebug", "enable debugging output")
   def Ydocdebug = debug
+  def verbose = debug
 
   /** A setting that defines in which format the documentation is output. ''Note:'' this setting is currently always
     * `html`. */

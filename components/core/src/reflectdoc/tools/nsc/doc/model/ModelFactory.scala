@@ -15,9 +15,11 @@ import scala.reflect.macros.internal.macroImpl
 
 import io._
 import model.{ RootPackage => RootPackageEntity }
+import scala.reflect.{ core => c }
+import scala.reflect.semantic._
 
 /** This trait extracts all required information for documentation from compilation units */
-class ModelFactory(val settings: doc.Settings) {
+class ModelFactory(implicit val host: HostContext, val settings: doc.Settings) {
   thisFactory: ModelFactory
                with ModelFactoryImplicitSupport
                with ModelFactoryTypeSupport
@@ -25,6 +27,32 @@ class ModelFactory(val settings: doc.Settings) {
                with CommentFactory
                with TreeFactory
                with MemberLookup =>
+
+  import org.scalareflect.errors.handlers.throwExceptions
+
+  // temporary class for empty comments:
+  class EmptyComment(comment: String) extends Comment {
+    def body: Body = Body(List(Paragraph(Text(comment))))
+    def authors: List[Body] = Nil
+    def see: List[Body] = Nil
+    def result: Option[Body] = None
+    def throws: Map[String, Body] = Map.empty
+    def valueParams: Map[String, Body] = Map.empty
+    def typeParams: Map[String, Body] = Map.empty
+    def version: Option[Body] = None
+    def since: Option[Body] = None
+    def todo: List[Body] = Nil
+    def deprecated: Option[Body] = None
+    def note: List[Body] = Nil
+    def example: List[Body] = Nil
+    def constructor: Option[Body]
+    def inheritDiagram: List[String] = Nil
+    def contentDiagram: List[String] = Nil
+    def group: Option[String] = None
+    def groupDesc: Map[String,Body] = Map.empty
+    def groupNames: Map[String,String] = Map.empty
+    def groupPrio: Map[String,Int] = Map.empty
+  }
 
 //  import global._
 //  import definitions.{ ObjectClass, NothingClass, AnyClass, AnyValClass, AnyRefClass, ListClass }
@@ -36,7 +64,7 @@ class ModelFactory(val settings: doc.Settings) {
   val defaultGroupDesc = None
   val defaultGroupPriority = 1000
 
-  def templatesCount = 0 // docTemplatesCache.count(_._2.isDocTemplate) - droppedPackages.size
+  def templatesCount = docTemplatesCache.count(_._2.isDocTemplate) - droppedPackages.size
 
   private var _modelFinished = false
   def modelFinished: Boolean = _modelFinished
@@ -46,111 +74,129 @@ class ModelFactory(val settings: doc.Settings) {
     val universe = new Universe { thisUniverse =>
       thisFactory.universe = thisUniverse
       val settings = thisFactory.settings
-      val rootPackage = ??? // modelCreation.createRootPackage
+      val rootPackage = ??? // make
+      val host: HostContext = ModelFactory.this.host
     }
     _modelFinished = true
 
-    // complete the links between model entities, everthing that couldn't have been done before
-    // universe.rootPackage.completeModel()
+//    // complete the links between model entities, everything that couldn't have been done before
+//    TODO:
+//    universe.rootPackage.completeModel()
 
-    Some(universe) filter (_.rootPackage != null)
+    Some(universe)
   }
 
-//  // state:
-//  var ids = 0
-//  private val droppedPackages = mutable.Set[PackageImpl]()
-//  protected val docTemplatesCache = new mutable.LinkedHashMap[Symbol, DocTemplateImpl]
-//  protected val noDocTemplatesCache = new mutable.LinkedHashMap[Symbol, NoDocTemplateImpl]
-//  def packageDropped(tpl: DocTemplateImpl) = tpl match {
-//    case p: PackageImpl => droppedPackages(p)
-//    case _ => false
-//  }
-//
-//  def optimize(str: String): String =
-//    if (str.length < 16) str.intern else str
-//
-//  /* ============== IMPLEMENTATION PROVIDING ENTITY TYPES ============== */
-//
-//  abstract class EntityImpl(val sym: Symbol, val inTpl: TemplateImpl) extends Entity {
-//    val name = optimize(sym.nameString)
-//    val universe = thisFactory.universe
-//
-//    // Debugging:
-//    // assert(id != 36, sym + "  " + sym.getClass)
-//    //println("Creating entity #" + id + " [" + kind + " " + qualifiedName + "] for sym " + sym.kindString + " " + sym.ownerChain.reverse.map(_.name).mkString("."))
-//
-//    def inTemplate: TemplateImpl = inTpl
-//    def toRoot: List[EntityImpl] = this :: inTpl.toRoot
-//    def qualifiedName = name
-//    def annotations = sym.annotations.filterNot(_.tpe =:= typeOf[macroImpl]).map(makeAnnotation)
-//    def inPackageObject: Boolean = sym.owner.isModuleClass && sym.owner.sourceModule.isPackageObject
-//    def isType = sym.name.isTypeName
-//  }
-//
-//  trait TemplateImpl extends EntityImpl with TemplateEntity {
-//    override def qualifiedName: String =
-//      if (inTemplate == null || inTemplate.isRootPackage) name else optimize(inTemplate.qualifiedName + "." + name)
-//    def isPackage = sym.isPackage
-//    def isTrait = sym.isTrait
-//    def isClass = sym.isClass && !sym.isTrait
-//    def isObject = sym.isModule && !sym.isPackage
-//    def isCaseClass = sym.isCaseClass
-//    def isRootPackage = false
-//    def selfType = if (sym.thisSym eq sym) None else Some(makeType(sym.thisSym.typeOfThis, this))
-//  }
-//
-//  abstract class MemberImpl(sym: Symbol, inTpl: DocTemplateImpl) extends EntityImpl(sym, inTpl) with MemberEntity {
-//    // If the current tpl is a DocTemplate, we consider itself as the root for resolving link targets (instead of the
-//    // package the class is in) -- so people can refer to methods directly [[foo]], instead of using [[MyClass.foo]]
-//    // in the doc comment of MyClass
-//    def linkTarget: DocTemplateImpl = inTpl
-//
-//    lazy val comment = {
+  val RootPackage = c.Term.Name("_root_")(false).defns.head
+  val AnyClass = c.Term.Select(c.Term.Name("scala")(false), c.Term.Name("Any")(false)).defns.head
+  val AnyRefClass = c.Term.Select(c.Term.Name("scala")(false), c.Term.Name("AnyRef")(false)).defns.head
+
+  // state:
+  var ids = 0
+  private val droppedPackages = mutable.Set[PackageImpl]()
+  protected val docTemplatesCache = new mutable.LinkedHashMap[c.Member, DocTemplateImpl]
+  protected val noDocTemplatesCache = new mutable.LinkedHashMap[c.Member, NoDocTemplateImpl]
+  def packageDropped(tpl: DocTemplateImpl) = tpl match {
+    case p: PackageImpl => droppedPackages(p)
+    case _ => false
+  }
+
+  def optimize(str: String): String =
+    if (str.length < 16) str.intern else str
+
+  /* ============== IMPLEMENTATION PROVIDING ENTITY TYPES ============== */
+
+  abstract class EntityImpl(val sym: c.Member, val inTpl: TemplateImpl) extends Entity {
+
+//    protected val sym = sym.defns match {
+//      case List(defn) => defn
+//      case _ => ???
+//    }
+
+    protected val reflName: c.Name = sym match {
+      case d: c.Has.Name => d.name
+    }
+
+    val name: String = optimize(reflName.value)
+    val universe = thisFactory.universe
+    def inTemplate: TemplateImpl = inTpl
+    def toRoot: List[EntityImpl] = this :: inTpl.toRoot
+    def qualifiedName = name
+    def annotations = List() // TODO: sym.annotations.filterNot(_.tpe =:= typeOf[macroImpl]).map(makeAnnotation)
+    def inPackageObject: Boolean = sym.isPkgObject
+    def isType = reflName.isInstanceOf[c.Type.Name]
+  }
+
+
+  trait TemplateImpl extends EntityImpl with TemplateEntity {
+    override def qualifiedName: String =
+      if (inTemplate == null || inTemplate.isRootPackage) name else optimize(inTemplate.qualifiedName + "." + name)
+    def isPackage = sym.isPkg
+    def isTrait = sym.isTrait
+    def isClass = sym.isClass && !sym.isTrait
+    def isObject = sym.isObject && !sym.isPkgObject
+    def isCaseClass = sym.isCase
+    def isRootPackage = false
+    def selfType = None // TODO: if (sym.thisSym eq sym) None else Some(makeType(sym.thisSym.typeOfThis, this))
+  }
+
+  abstract class MemberImpl(sym: c.Member, inTpl: DocTemplateImpl) extends EntityImpl(sym, inTpl) with MemberEntity {
+    // If the current tpl is a DocTemplate, we consider itself as the root for resolving link targets (instead of the
+    // package the class is in) -- so people can refer to methods directly [[foo]], instead of using [[MyClass.foo]]
+    // in the doc comment of MyClass
+    def linkTarget: DocTemplateImpl = inTpl
+
+    lazy val comment = {
+//      TODO:
 //      val documented = if (sym.hasAccessorFlag) sym.accessed else sym
 //      thisFactory.comment(documented, linkTarget, inTpl)
-//    }
-//    def group = comment flatMap (_.group) getOrElse defaultGroup
-//    override def inTemplate = inTpl
-//    override def toRoot: List[MemberImpl] = this :: inTpl.toRoot
-//    def inDefinitionTemplates =
-//        if (inTpl == null)
-//          docTemplatesCache(RootPackage) :: Nil
-//        else
-//          makeTemplate(sym.owner)::(sym.allOverriddenSymbols map { inhSym => makeTemplate(inhSym.owner) })
-//    def visibility = {
-//      if (sym.isPrivateLocal) PrivateInInstance()
-//      else if (sym.isProtectedLocal) ProtectedInInstance()
-//      else {
-//        val qual =
-//          if (sym.hasAccessBoundary)
-//            Some(makeTemplate(sym.privateWithin))
-//          else None
-//        if (sym.isPrivate) PrivateInTemplate(inTpl)
-//        else if (sym.isProtected) ProtectedInTemplate(qual getOrElse inTpl)
-//        else qual match {
-//          case Some(q) => PrivateInTemplate(q)
-//          case None => Public()
-//        }
-//      }
-//    }
-//    def flags = {
-//      val fgs = mutable.ListBuffer.empty[Paragraph]
-//      if (sym.isImplicit) fgs += Paragraph(Text("implicit"))
-//      if (sym.isSealed) fgs += Paragraph(Text("sealed"))
-//      if (!sym.isTrait && (sym hasFlag Flags.ABSTRACT)) fgs += Paragraph(Text("abstract"))
-//      /* Resetting the DEFERRED flag is a little trick here for refined types: (example from scala.collections)
-//       * {{{
-//       *     implicit def traversable2ops[T](t: scala.collection.GenTraversableOnce[T]) = new TraversableOps[T] {
-//       *       def isParallel = ...
-//       * }}}
-//       * the type the method returns is TraversableOps, which has all-abstract symbols. But in reality, it couldn't have
-//       * any abstract terms, otherwise it would fail compilation. So we reset the DEFERRED flag. */
-//      if (!sym.isTrait && (sym hasFlag Flags.DEFERRED) && (!isImplicitlyInherited)) fgs += Paragraph(Text("abstract"))
-//      if (!sym.isModule && (sym hasFlag Flags.FINAL)) fgs += Paragraph(Text("final"))
-//      if (sym.isMacro) fgs += Paragraph(Text("macro"))
-//      fgs.toList
-//    }
-//    def deprecation =
+      Some(new EmptyComment("No such thing..."))
+    }
+
+    def group = comment flatMap (_.group) getOrElse defaultGroup
+    override def inTemplate = inTpl
+    override def toRoot: List[MemberImpl] = this :: inTpl.toRoot
+    def inDefinitionTemplates =
+        if (inTpl == null)
+          docTemplatesCache(RootPackage) :: Nil
+        else
+          makeTemplate(sym.owner)::(sym.allOverriddenSymbols map { inhSym => makeTemplate(inhSym.owner) })
+    def visibility = {
+      if (sym.isPrivate) PrivateInInstance()
+      else if (sym.isProtected) ProtectedInInstance()
+      else {
+        val qual =
+          if (sym.isPrivate || sym.isProtected)
+            Some(makeTemplate(sym.mods.collect({ case mod: c.Mod.Private => mod.within; case mod: c.Mod.Protected => mod.within }).head))
+          else
+            None
+        if (sym.isPrivate) PrivateInTemplate(inTpl)
+        else if (sym.isProtected) ProtectedInTemplate(qual getOrElse inTpl)
+        else qual match {
+          case Some(q) => PrivateInTemplate(q)
+          case None => Public()
+        }
+      }
+    }
+    def flags = {
+      val fgs = mutable.ListBuffer.empty[Paragraph]
+      if (sym.isImplicit) fgs += Paragraph(Text("implicit"))
+      if (sym.isSealed) fgs += Paragraph(Text("sealed"))
+      if (!sym.isTrait && (sym.isAbstract)) fgs += Paragraph(Text("abstract"))
+      /* Resetting the DEFERRED flag is a little trick here for refined types: (example from scala.collections)
+       * {{{
+       *     implicit def traversable2ops[T](t: scala.collection.GenTraversableOnce[T]) = new TraversableOps[T] {
+       *       def isParallel = ...
+       * }}}
+       * the type the method returns is TraversableOps, which has all-abstract symbols. But in reality, it couldn't have
+       * any abstract terms, otherwise it would fail compilation. So we reset the DEFERRED flag. */
+      if (!sym.isTrait && !isImplicitlyInherited) fgs += Paragraph(Text("abstract"))
+      if (!sym.isObject && sym.isFinal) fgs += Paragraph(Text("final"))
+      if (sym.isMacro) fgs += Paragraph(Text("macro"))
+      fgs.toList
+    }
+    def deprecation =
+      None
+//      TODO:
 //      if (sym.isDeprecated)
 //        Some((sym.deprecationMessage, sym.deprecationVersion) match {
 //          case (Some(msg), Some(ver)) => parseWiki("''(Since version " + ver + ")'' " + msg, NoPosition, inTpl)
@@ -160,7 +206,9 @@ class ModelFactory(val settings: doc.Settings) {
 //        })
 //      else
 //        comment flatMap { _.deprecated }
-//    def migration =
+    def migration =
+      None
+//      TODO:
 //      if(sym.hasMigrationAnnotation)
 //        Some((sym.migrationMessage, sym.migrationVersion) match {
 //          case (Some(msg), Some(ver)) => parseWiki("''(Changed in version " + ver + ")'' " + msg, NoPosition, inTpl)
@@ -170,8 +218,8 @@ class ModelFactory(val settings: doc.Settings) {
 //        })
 //      else
 //        None
-//
-//    def resultType = {
+
+    def resultType = {
 //      def resultTpe(tpe: Type): Type = tpe match { // similar to finalResultType, except that it leaves singleton types alone
 //        case PolyType(_, res) => resultTpe(res)
 //        case MethodType(_, res) => resultTpe(res)
@@ -180,22 +228,25 @@ class ModelFactory(val settings: doc.Settings) {
 //      }
 //      val tpe = byConversion.fold(sym.tpe) (_.toType memberInfo sym)
 //      makeTypeInTemplateContext(resultTpe(tpe), inTemplate, sym)
-//    }
-//    def isDef = false
-//    def isVal = false
-//    def isLazyVal = false
-//    def isVar = false
-//    def isConstructor = false
-//    def isAliasType = false
-//    def isAbstractType = false
-//    def isAbstract =
-//      // for the explanation of conversion == null see comment on flags
-//      ((!sym.isTrait && ((sym hasFlag Flags.ABSTRACT) || (sym hasFlag Flags.DEFERRED)) && (!isImplicitlyInherited)) ||
-//      sym.isAbstractClass || sym.isAbstractType) && !sym.isSynthetic
-//
-//    def signature = externalSignature(sym)
-//    lazy val signatureCompat = {
-//
+      ???
+    }
+    def isDef = false
+    def isVal = false
+    def isLazyVal = false
+    def isVar = false
+    def isConstructor = false
+    def isAliasType = false
+    def isAbstractType = false
+    def isAbstract =
+      // for the explanation of conversion == null see comment on flags
+      ((!sym.isTrait && sym.isAbstract && (!isImplicitlyInherited)) || (sym.isAbstract  && sym.isType))
+
+    def signature =
+      ???
+      // TODO:
+      // externalSignature(sym)
+    lazy val signatureCompat = {
+
 //      def defParams(mbr: Any): String = mbr match {
 //        case d: MemberEntity with Def =>
 //          val paramLists: List[String] =
@@ -219,39 +270,42 @@ class ModelFactory(val settings: doc.Settings) {
 //      }
 //
 //      (name + tParams(this) + defParams(this) +":"+ resultType.name).replaceAll("\\s","") // no spaces allowed, they break links
-//    }
-//    // these only apply for NonTemplateMemberEntities
-//    def useCaseOf: Option[MemberImpl] = None
-//    def byConversion: Option[ImplicitConversionImpl] = None
-//    def isImplicitlyInherited = false
-//    def isShadowedImplicit    = false
-//    def isAmbiguousImplicit   = false
-//    def isShadowedOrAmbiguousImplicit = false
-//  }
-//
-//  /** A template that is not documented at all. The class is instantiated during lookups, to indicate that the class
-//   *  exists, but should not be documented (either it's not included in the source or it's not visible)
-//   */
-//  class NoDocTemplateImpl(sym: Symbol, inTpl: TemplateImpl) extends EntityImpl(sym, inTpl) with TemplateImpl with HigherKindedImpl with NoDocTemplate {
-//    assert(modelFinished, this)
-//    assert(!(noDocTemplatesCache isDefinedAt sym), (sym, noDocTemplatesCache(sym)))
-//    noDocTemplatesCache += (sym -> this)
-//    def isDocTemplate = false
-//  }
-//
-//  /** An inherited template that was not documented in its original owner - example:
-//   *  in classpath:  trait T { class C } -- T (and implicitly C) are not documented
-//   *  in the source: trait U extends T -- C appears in U as a MemberTemplateImpl -- that is, U has a member for it
-//   *  but C doesn't get its own page
-//   */
-//  abstract class MemberTemplateImpl(sym: Symbol, inTpl: DocTemplateImpl) extends MemberImpl(sym, inTpl) with TemplateImpl with HigherKindedImpl with MemberTemplateEntity {
-//    // no templates cache for this class, each owner gets its own instance
-//    def isDocTemplate = false
-//    lazy val definitionName = optimize(inDefinitionTemplates.head.qualifiedName + "." + name)
-//    def valueParams: List[List[ValueParam]] = Nil /** TODO, these are now only computed for DocTemplates */
-//
-//    def parentTypes =
-//      if (sym.isPackage || sym == AnyClass) List() else {
+      ""
+    }
+    // these only apply for NonTemplateMemberEntities
+    def useCaseOf: Option[MemberImpl] = None
+    def byConversion: Option[ImplicitConversionImpl] = None
+    def isImplicitlyInherited = false
+    def isShadowedImplicit    = false
+    def isAmbiguousImplicit   = false
+    def isShadowedOrAmbiguousImplicit = false
+  }
+
+  /** A template that is not documented at all. The class is instantiated during lookups, to indicate that the class
+   *  exists, but should not be documented (either it's not included in the source or it's not visible)
+   */
+  class NoDocTemplateImpl(sym: c.Member, inTpl: TemplateImpl) extends EntityImpl(sym, inTpl) with TemplateImpl with HigherKindedImpl with NoDocTemplate {
+    assert(modelFinished, this)
+    assert(!(noDocTemplatesCache isDefinedAt sym), (sym, noDocTemplatesCache(sym)))
+    noDocTemplatesCache += (sym -> this)
+    def isDocTemplate = false
+  }
+
+  /** An inherited template that was not documented in its original owner - example:
+   *  in classpath:  trait T { class C } -- T (and implicitly C) are not documented
+   *  in the source: trait U extends T -- C appears in U as a MemberTemplateImpl -- that is, U has a member for it
+   *  but C doesn't get its own page
+   */
+  abstract class MemberTemplateImpl(sym: c.Member, inTpl: DocTemplateImpl) extends MemberImpl(sym, inTpl) with TemplateImpl with HigherKindedImpl with MemberTemplateEntity {
+    // no templates cache for this class, each owner gets its own instance
+    def isDocTemplate = false
+    lazy val definitionName = optimize(inDefinitionTemplates.head.qualifiedName + "." + name)
+    def valueParams: List[List[ValueParam]] = Nil /** TODO, these are now only computed for DocTemplates */
+
+    def parentTypes =
+      Nil
+//      TODO:
+//      if (sym.isPkg || sym == AnyClass) List() else {
 //        val tps = (this match {
 //          case a: AliasType => sym.tpe.dealias.parents
 //          case a: AbstractType => sym.info.bounds match {
@@ -263,31 +317,36 @@ class ModelFactory(val settings: doc.Settings) {
 //        }) map { _.asSeenFrom(sym.thisType, sym) }
 //        makeParentTypes(RefinedType(tps, EmptyScope), Some(this), inTpl)
 //      }
-//  }
-//
-//   /** The instantiation of `TemplateImpl` triggers the creation of the following entities:
-//    *  All ancestors of the template and all non-package members.
-//    */
-//  abstract class DocTemplateImpl(sym: Symbol, inTpl: DocTemplateImpl) extends MemberTemplateImpl(sym, inTpl) with DocTemplateEntity {
-//    assert(!modelFinished, (sym, inTpl))
-//    assert(!(docTemplatesCache isDefinedAt sym), sym)
-//    docTemplatesCache += (sym -> this)
-//
-//    if (settings.verbose)
-//      inform("Creating doc template for " + sym)
-//
-//    override def linkTarget: DocTemplateImpl = this
-//    override def toRoot: List[DocTemplateImpl] = this :: inTpl.toRoot
-//
-//    protected def reprSymbol: Symbol = sym
-//
-//    def inSource =
+  }
+
+   /** The instantiation of `TemplateImpl` triggers the creation of the following entities:
+    *  All ancestors of the template and all non-package members.
+    */
+  abstract class DocTemplateImpl(sym: c.Member, inTpl: DocTemplateImpl) extends MemberTemplateImpl(sym, inTpl) with DocTemplateEntity {
+    assert(!modelFinished, (sym, inTpl))
+    assert(!(docTemplatesCache isDefinedAt sym), sym)
+    docTemplatesCache += (sym -> this)
+
+    if (settings.verbose)
+      println("Creating doc template for " + sym)
+
+    override def linkTarget: DocTemplateImpl = this
+    override def toRoot: List[DocTemplateImpl] = this :: inTpl.toRoot
+
+    protected def reprSymbol: c.Member = sym
+
+    def inSource =
+      None
+//      TODO:
 //      if (reprSymbol.sourceFile != null && ! reprSymbol.isSynthetic)
 //        Some((reprSymbol.sourceFile, reprSymbol.pos.line))
 //      else
 //        None
-//
-//    def sourceUrl = {
+
+    def sourceUrl =
+      None
+//      TODO:
+//    {
 //      def fixPath(s: String) = s.replaceAll("\\" + java.io.File.separator, "/")
 //      val assumedSourceRoot  = fixPath(settings.sourcepath.value) stripSuffix "/"
 //
@@ -307,244 +366,251 @@ class ModelFactory(val settings: doc.Settings) {
 //        }
 //      else None
 //    }
-//
+
 //    private def templateAndType(ancestor: Symbol): (TemplateImpl, TypeEntity) = (makeTemplate(ancestor), makeType(reprSymbol.info.baseType(ancestor), this))
-//    lazy val (linearizationTemplates, linearizationTypes) =
+    lazy val (linearizationTemplates, linearizationTypes) =
+      (Nil, Nil)
+//      TODO:
 //      (reprSymbol.ancestors map templateAndType).unzip
-//
-//    /* Subclass cache */
-//    private lazy val subClassesCache = (
-//      if (sym == AnyRefClass) null
-//      else mutable.ListBuffer[DocTemplateEntity]()
-//    )
-//    def registerSubClass(sc: DocTemplateEntity): Unit = {
-//      if (subClassesCache != null)
-//        subClassesCache += sc
-//    }
-//    def directSubClasses = if (subClassesCache == null) Nil else subClassesCache.toList
-//
-//    /* Implicitly convertible class cache */
-//    private var implicitlyConvertibleClassesCache: mutable.ListBuffer[(DocTemplateImpl, ImplicitConversionImpl)] = null
-//    def registerImplicitlyConvertibleClass(dtpl: DocTemplateImpl, conv: ImplicitConversionImpl): Unit = {
-//      if (implicitlyConvertibleClassesCache == null)
-//        implicitlyConvertibleClassesCache = mutable.ListBuffer[(DocTemplateImpl, ImplicitConversionImpl)]()
-//      implicitlyConvertibleClassesCache += ((dtpl, conv))
-//    }
-//
-//    def incomingImplicitlyConvertedClasses: List[(DocTemplateImpl, ImplicitConversionImpl)] =
-//      if (implicitlyConvertibleClassesCache == null)
-//        List()
-//      else
-//        implicitlyConvertibleClassesCache.toList
-//
-//    // the implicit conversions are generated eagerly, but the members generated by implicit conversions are added
-//    // lazily, on completeModel
-//    val conversions: List[ImplicitConversionImpl] =
+
+    /* Subclass cache */
+    private lazy val subClassesCache = (
+      if (sym == AnyRefClass) null
+      else mutable.ListBuffer[DocTemplateEntity]()
+    )
+    def registerSubClass(sc: DocTemplateEntity): Unit = {
+      if (subClassesCache != null)
+        subClassesCache += sc
+    }
+    def directSubClasses = if (subClassesCache == null) Nil else subClassesCache.toList
+
+    /* Implicitly convertible class cache */
+    private var implicitlyConvertibleClassesCache: mutable.ListBuffer[(DocTemplateImpl, ImplicitConversionImpl)] = null
+    def registerImplicitlyConvertibleClass(dtpl: DocTemplateImpl, conv: ImplicitConversionImpl): Unit = {
+      if (implicitlyConvertibleClassesCache == null)
+        implicitlyConvertibleClassesCache = mutable.ListBuffer[(DocTemplateImpl, ImplicitConversionImpl)]()
+      implicitlyConvertibleClassesCache += ((dtpl, conv))
+    }
+
+    def incomingImplicitlyConvertedClasses: List[(DocTemplateImpl, ImplicitConversionImpl)] =
+      if (implicitlyConvertibleClassesCache == null)
+        List()
+      else
+        implicitlyConvertibleClassesCache.toList
+
+    // the implicit conversions are generated eagerly, but the members generated by implicit conversions are added
+    // lazily, on completeModel
+    val conversions: List[ImplicitConversionImpl] =
+      Nil
+//      TODO:
 //      if (settings.docImplicits) makeImplicitConversions(sym, this) else Nil
-//
-//    // members as given by the compiler
-//    lazy val memberSyms      = sym.info.members.filter(s => membersShouldDocument(s, this)).toList
-//
-//    // the inherited templates (classes, traits or objects)
-//    val memberSymsLazy  = memberSyms.filter(t => templateShouldDocument(t, this) && !inOriginalOwner(t, this))
-//    // the direct members (methods, values, vars, types and directly contained templates)
-//    val memberSymsEager = memberSyms.filter(!memberSymsLazy.contains(_))
-//    // the members generated by the symbols in memberSymsEager
-//    val ownMembers      = (memberSymsEager.flatMap(makeMember(_, None, this)))
-//
-//    // all the members that are documentented PLUS the members inherited by implicit conversions
-//    var members: List[MemberImpl] = ownMembers
-//
-//    def templates       = members collect { case c: TemplateEntity with MemberEntity => c }
-//    def methods         = members collect { case d: Def => d }
-//    def values          = members collect { case v: Val => v }
-//    def abstractTypes   = members collect { case t: AbstractType => t }
-//    def aliasTypes      = members collect { case t: AliasType => t }
-//
-//    /**
-//     * This is the final point in the core model creation: no DocTemplates are created after the model has finished, but
-//     * inherited templates and implicit members are added to the members at this point.
-//     */
-//    def completeModel(): Unit = {
-//      // DFS completion
-//      // since alias types and abstract types have no own members, there's no reason for them to call completeModel
-//      if (!sym.isAliasType && !sym.isAbstractType)
-//        for (member <- members)
-//          member match {
-//            case d: DocTemplateImpl => d.completeModel()
-//            case _ =>
-//          }
-//
-//      members :::= memberSymsLazy.map(modelCreation.createLazyTemplateMember(_, this))
-//
-//      outgoingImplicitlyConvertedClasses
-//
+
+    // members as given by the compiler
+    lazy val memberSyms      = Nil
+//      TODO:
+//      sym.info.members.filter(s => membersShouldDocument(s, this)).toList
+
+    // the inherited templates (classes, traits or objects)
+    val memberSymsLazy  = memberSyms.filter(t => templateShouldDocument(t, this) && !inOriginalOwner(t, this))
+    // the direct members (methods, values, vars, types and directly contained templates)
+    val memberSymsEager = memberSyms.filter(!memberSymsLazy.contains(_))
+    // the members generated by the symbols in memberSymsEager
+    val ownMembers      = (memberSymsEager.flatMap(makeMember(_, None, this)))
+
+    // all the members that are documentented PLUS the members inherited by implicit conversions
+    var members: List[MemberImpl] = ownMembers
+
+    def templates       = members collect { case c: TemplateEntity with MemberEntity => c }
+    def methods         = members collect { case d: Def => d }
+    def values          = members collect { case v: Val => v }
+    def abstractTypes   = members collect { case t: AbstractType => t }
+    def aliasTypes      = members collect { case t: AliasType => t }
+
+    /**
+     * This is the final point in the core model creation: no DocTemplates are created after the model has finished, but
+     * inherited templates and implicit members are added to the members at this point.
+     */
+    def completeModel(): Unit = {
+      // DFS completion
+      // since alias types and abstract types have no own members, there's no reason for them to call completeModel
+      if (!sym.isAliasType && !sym.isAbstractType)
+        for (member <- members)
+          member match {
+            case d: DocTemplateImpl => d.completeModel()
+            case _ =>
+          }
+
+      members :::= memberSymsLazy.map(modelCreation.createLazyTemplateMember(_, this))
+
+      outgoingImplicitlyConvertedClasses
+
+//      TODO:
 //      for (pt <- sym.info.parents; parentTemplate <- findTemplateMaybe(pt.typeSymbol)) parentTemplate registerSubClass this
-//
-//      // the members generated by the symbols in memberSymsEager PLUS the members from the usecases
-//      val allMembers = ownMembers ::: ownMembers.flatMap(_.useCaseOf).distinct
-//      implicitsShadowing = makeShadowingTable(allMembers, conversions, this)
-//      // finally, add the members generated by implicit conversions
-//      members :::= conversions.flatMap(_.memberImpls)
-//    }
-//
-//    var implicitsShadowing = Map[MemberEntity, ImplicitMemberShadowing]()
-//
-//    lazy val outgoingImplicitlyConvertedClasses: List[(TemplateEntity, TypeEntity, ImplicitConversionImpl)] =
-//      conversions flatMap (conv =>
-//        if (!implicitExcluded(conv.conversionQualifiedName))
-//          conv.targetTypeComponents map {
-//            case (template, tpe) =>
-//              template match {
-//                case d: DocTemplateImpl if (d != this) => d.registerImplicitlyConvertibleClass(this, conv)
-//                case _ => // nothing
-//              }
-//              (template, tpe, conv)
-//          }
-//        else List()
-//      )
-//
-//    override def isDocTemplate = true
-//    private[this] lazy val companionSymbol =
-//      if (sym.isAliasType || sym.isAbstractType) {
-//        inTpl.sym.info.member(sym.name.toTermName) match {
-//          case NoSymbol => NoSymbol
-//          case s =>
-//            s.info match {
-//              case ot: OverloadedType =>
-//                NoSymbol
-//              case _ =>
-//                // that's to navigate from val Foo: FooExtractor to FooExtractor :)
-//                s.info.resultType.typeSymbol
-//            }
-//        }
-//      }
-//      else
-//        sym.companionSymbol
-//
-//    def companion =
-//      companionSymbol match {
-//        case NoSymbol => None
-//        case comSym if !isEmptyJavaObject(comSym) && (comSym.isClass || comSym.isModule) =>
-//          makeTemplate(comSym) match {
-//            case d: DocTemplateImpl => Some(d)
-//            case _ => None
-//          }
-//        case _ => None
-//      }
-//
-//    def constructors: List[MemberImpl with Constructor] = if (isClass) members collect { case d: Constructor => d } else Nil
-//    def primaryConstructor: Option[MemberImpl with Constructor] = if (isClass) constructors find { _.isPrimary } else None
-//    override def valueParams =
-//      // we don't want params on a class (non case class) signature
-//      if (isCaseClass) primaryConstructor match {
-//        case Some(const) => const.sym.paramss map (_ map (makeValueParam(_, this)))
-//        case None => List()
-//      }
-//      else List.empty
-//
-//    // These are generated on-demand, make sure you don't call them more than once
-//    def inheritanceDiagram = makeInheritanceDiagram(this)
-//    def contentDiagram = makeContentDiagram(this)
-//
-//    def groupSearch[T](extractor: Comment => Option[T]): Option[T] = {
-//      val comments = comment +: linearizationTemplates.collect { case dtpl: DocTemplateImpl => dtpl.comment }
-//      comments.flatten.map(extractor).flatten.headOption orElse {
-//        Option(inTpl) flatMap (_.groupSearch(extractor))
-//      }
-//    }
-//
-//    def groupDescription(group: String): Option[Body] = groupSearch(_.groupDesc.get(group)) orElse { if (group == defaultGroup) defaultGroupDesc else None }
-//    def groupPriority(group: String): Int = groupSearch(_.groupPrio.get(group)) getOrElse { if (group == defaultGroup) defaultGroupPriority else 0 }
-//    def groupName(group: String): String = groupSearch(_.groupNames.get(group)) getOrElse { if (group == defaultGroup) defaultGroupName else group }
-//  }
-//
-//  abstract class PackageImpl(sym: Symbol, inTpl: PackageImpl) extends DocTemplateImpl(sym, inTpl) with Package {
-//    override def inTemplate = inTpl
-//    override def toRoot: List[PackageImpl] = this :: inTpl.toRoot
-//    override def reprSymbol = sym.info.members.find (_.isPackageObject) getOrElse sym
-//
-//    def packages = members collect { case p: PackageImpl if !(droppedPackages contains p) => p }
-//  }
-//
-//  abstract class RootPackageImpl(sym: Symbol) extends PackageImpl(sym, null) with RootPackageEntity
-//
-//  abstract class NonTemplateMemberImpl(sym: Symbol, conversion: Option[ImplicitConversionImpl],
-//                                       override val useCaseOf: Option[MemberImpl], inTpl: DocTemplateImpl)
-//           extends MemberImpl(sym, inTpl) with NonTemplateMemberEntity {
-//    override lazy val comment = {
-//      def nonRootTemplate(sym: Symbol): Option[DocTemplateImpl] =
-//        if (sym eq RootPackage) None else findTemplateMaybe(sym)
-//      /* Variable precendence order for implicitly added members: Take the variable defifinitions from ...
-//       * 1. the target of the implicit conversion
-//       * 2. the definition template (owner)
-//       * 3. the current template
-//       */
-//      val inRealTpl = conversion.flatMap { conv =>
-//        nonRootTemplate(conv.toType.typeSymbol)
-//      } orElse nonRootTemplate(sym.owner) orElse Option(inTpl)
-//      inRealTpl flatMap { tpl =>
-//        thisFactory.comment(sym, tpl, tpl)
-//      }
-//    }
-//
-//    override def inDefinitionTemplates = useCaseOf.fold(super.inDefinitionTemplates)(_.inDefinitionTemplates)
-//
-//    override def qualifiedName = optimize(inTemplate.qualifiedName + "#" + name)
-//    lazy val definitionName = {
-//      val qualifiedName = conversion.fold(inDefinitionTemplates.head.qualifiedName)(_.conversionQualifiedName)
-//      optimize(qualifiedName + "#" + name)
-//    }
-//    def isUseCase = useCaseOf.isDefined
-//    override def byConversion: Option[ImplicitConversionImpl] = conversion
-//    override def isImplicitlyInherited = { assert(modelFinished); conversion.isDefined }
-//    override def isShadowedImplicit    = isImplicitlyInherited && inTpl.implicitsShadowing.get(this).map(_.isShadowed).getOrElse(false)
-//    override def isAmbiguousImplicit   = isImplicitlyInherited && inTpl.implicitsShadowing.get(this).map(_.isAmbiguous).getOrElse(false)
-//    override def isShadowedOrAmbiguousImplicit = isShadowedImplicit || isAmbiguousImplicit
-//  }
-//
-//  abstract class NonTemplateParamMemberImpl(sym: Symbol, conversion: Option[ImplicitConversionImpl],
-//                                            useCaseOf: Option[MemberImpl], inTpl: DocTemplateImpl)
-//           extends NonTemplateMemberImpl(sym, conversion, useCaseOf, inTpl) {
-//    def valueParams = {
-//      val info = conversion.fold(sym.info)(_.toType memberInfo sym)
-//      info.paramss map { ps => (ps.zipWithIndex) map { case (p, i) =>
-//        if (p.nameString contains "$") makeValueParam(p, inTpl, optimize("arg" + i)) else makeValueParam(p, inTpl)
-//      }}
-//    }
-//  }
-//
-//  abstract class ParameterImpl(val sym: Symbol, val inTpl: TemplateImpl) extends ParameterEntity {
-//    val name = optimize(sym.nameString)
-//  }
-//
-//  private trait AliasImpl {
-//    def sym: Symbol
-//    def inTpl: TemplateImpl
-//    def alias = makeTypeInTemplateContext(sym.tpe.dealias, inTpl, sym)
-//  }
-//
-//  private trait TypeBoundsImpl {
-//    def sym: Symbol
-//    def inTpl: TemplateImpl
-//    def lo = sym.info.bounds match {
-//      case TypeBounds(lo, hi) if lo.typeSymbol != NothingClass =>
-//        Some(makeTypeInTemplateContext(appliedType(lo, sym.info.typeParams map {_.tpe}), inTpl, sym))
-//      case _ => None
-//    }
-//    def hi = sym.info.bounds match {
-//      case TypeBounds(lo, hi) if hi.typeSymbol != AnyClass =>
-//        Some(makeTypeInTemplateContext(appliedType(hi, sym.info.typeParams map {_.tpe}), inTpl, sym))
-//      case _ => None
-//    }
-//  }
-//
-//  trait HigherKindedImpl extends HigherKinded {
-//    def sym: Symbol
-//    def inTpl: TemplateImpl
-//    def typeParams =
-//      sym.typeParams map (makeTypeParam(_, inTpl))
-//  }
+
+      // the members generated by the symbols in memberSymsEager PLUS the members from the usecases
+      val allMembers = ownMembers ::: ownMembers.flatMap(_.useCaseOf).distinct
+      implicitsShadowing = makeShadowingTable(allMembers, conversions, this)
+      // finally, add the members generated by implicit conversions
+      members :::= conversions.flatMap(_.memberImpls)
+    }
+
+    var implicitsShadowing = Map[MemberEntity, ImplicitMemberShadowing]()
+
+    lazy val outgoingImplicitlyConvertedClasses: List[(TemplateEntity, TypeEntity, ImplicitConversionImpl)] =
+      conversions flatMap (conv =>
+        if (!implicitExcluded(conv.conversionQualifiedName))
+          conv.targetTypeComponents map {
+            case (template, tpe) =>
+              template match {
+                case d: DocTemplateImpl if (d != this) => d.registerImplicitlyConvertibleClass(this, conv)
+                case _ => // nothing
+              }
+              (template, tpe, conv)
+          }
+        else List()
+      )
+
+    override def isDocTemplate = true
+    private[this] lazy val companionSymbol =
+      if (sym.isAliasType || sym.isAbstractType) {
+        inTpl.sym.info.member(sym.name.toTermName) match {
+          case NoSymbol => NoSymbol
+          case s =>
+            s.info match {
+              case ot: OverloadedType =>
+                NoSymbol
+              case _ =>
+                // that's to navigate from val Foo: FooExtractor to FooExtractor :)
+                s.info.resultType.typeSymbol
+            }
+        }
+      }
+      else
+        sym.companionSymbol
+
+    def companion =
+      companionSymbol match {
+        case NoSymbol => None
+        case comSym if !isEmptyJavaObject(comSym) && (comSym.isClass || comSym.isModule) =>
+          makeTemplate(comSym) match {
+            case d: DocTemplateImpl => Some(d)
+            case _ => None
+          }
+        case _ => None
+      }
+
+    def constructors: List[MemberImpl with Constructor] = if (isClass) members collect { case d: Constructor => d } else Nil
+    def primaryConstructor: Option[MemberImpl with Constructor] = if (isClass) constructors find { _.isPrimary } else None
+    override def valueParams =
+      // we don't want params on a class (non case class) signature
+      if (isCaseClass) primaryConstructor match {
+        case Some(const) => const.sym.paramss map (_ map (makeValueParam(_, this)))
+        case None => List()
+      }
+      else List.empty
+
+    // These are generated on-demand, make sure you don't call them more than once
+    def inheritanceDiagram = None // TODO: makeInheritanceDiagram(this)
+    def contentDiagram = None // TODO: makeContentDiagram(this)
+
+    def groupSearch[T](extractor: Comment => Option[T]): Option[T] = {
+      val comments = comment +: linearizationTemplates.collect { case dtpl: DocTemplateImpl => dtpl.comment }
+      comments.flatten.map(extractor).flatten.headOption orElse {
+        Option(inTpl) flatMap (_.groupSearch(extractor))
+      }
+    }
+
+    def groupDescription(group: String): Option[Body] = groupSearch(_.groupDesc.get(group)) orElse { if (group == defaultGroup) defaultGroupDesc else None }
+    def groupPriority(group: String): Int = groupSearch(_.groupPrio.get(group)) getOrElse { if (group == defaultGroup) defaultGroupPriority else 0 }
+    def groupName(group: String): String = groupSearch(_.groupNames.get(group)) getOrElse { if (group == defaultGroup) defaultGroupName else group }
+  }
+
+  abstract class PackageImpl(sym: Symbol, inTpl: PackageImpl) extends DocTemplateImpl(sym, inTpl) with Package {
+    override def inTemplate = inTpl
+    override def toRoot: List[PackageImpl] = this :: inTpl.toRoot
+    override def reprSymbol = sym.info.members.find (_.isPackageObject) getOrElse sym
+
+    def packages = members collect { case p: PackageImpl if !(droppedPackages contains p) => p }
+  }
+
+  abstract class RootPackageImpl(sym: Symbol) extends PackageImpl(sym, null) with RootPackageEntity
+
+  abstract class NonTemplateMemberImpl(sym: Symbol, conversion: Option[ImplicitConversionImpl],
+                                       override val useCaseOf: Option[MemberImpl], inTpl: DocTemplateImpl)
+           extends MemberImpl(sym, inTpl) with NonTemplateMemberEntity {
+    override lazy val comment = {
+      def nonRootTemplate(sym: Symbol): Option[DocTemplateImpl] =
+        if (sym eq RootPackage) None else findTemplateMaybe(sym)
+      /* Variable precendence order for implicitly added members: Take the variable defifinitions from ...
+       * 1. the target of the implicit conversion
+       * 2. the definition template (owner)
+       * 3. the current template
+       */
+      val inRealTpl = conversion.flatMap { conv =>
+        nonRootTemplate(conv.toType.typeSymbol)
+      } orElse nonRootTemplate(sym.owner) orElse Option(inTpl)
+      inRealTpl flatMap { tpl =>
+        thisFactory.comment(sym, tpl, tpl)
+      }
+    }
+
+    override def inDefinitionTemplates = useCaseOf.fold(super.inDefinitionTemplates)(_.inDefinitionTemplates)
+
+    override def qualifiedName = optimize(inTemplate.qualifiedName + "#" + name)
+    lazy val definitionName = {
+      val qualifiedName = conversion.fold(inDefinitionTemplates.head.qualifiedName)(_.conversionQualifiedName)
+      optimize(qualifiedName + "#" + name)
+    }
+    def isUseCase = useCaseOf.isDefined
+    override def byConversion: Option[ImplicitConversionImpl] = conversion
+    override def isImplicitlyInherited = { assert(modelFinished); conversion.isDefined }
+    override def isShadowedImplicit    = isImplicitlyInherited && inTpl.implicitsShadowing.get(this).map(_.isShadowed).getOrElse(false)
+    override def isAmbiguousImplicit   = isImplicitlyInherited && inTpl.implicitsShadowing.get(this).map(_.isAmbiguous).getOrElse(false)
+    override def isShadowedOrAmbiguousImplicit = isShadowedImplicit || isAmbiguousImplicit
+  }
+
+  abstract class NonTemplateParamMemberImpl(sym: Symbol, conversion: Option[ImplicitConversionImpl],
+                                            useCaseOf: Option[MemberImpl], inTpl: DocTemplateImpl)
+           extends NonTemplateMemberImpl(sym, conversion, useCaseOf, inTpl) {
+    def valueParams = {
+      val info = conversion.fold(sym.info)(_.toType memberInfo sym)
+      info.paramss map { ps => (ps.zipWithIndex) map { case (p, i) =>
+        if (p.nameString contains "$") makeValueParam(p, inTpl, optimize("arg" + i)) else makeValueParam(p, inTpl)
+      }}
+    }
+  }
+
+  abstract class ParameterImpl(val sym: Symbol, val inTpl: TemplateImpl) extends ParameterEntity {
+    val name = optimize(sym.nameString)
+  }
+
+  private trait AliasImpl {
+    def sym: Symbol
+    def inTpl: TemplateImpl
+    def alias = makeTypeInTemplateContext(sym.tpe.dealias, inTpl, sym)
+  }
+
+  private trait TypeBoundsImpl {
+    def sym: Symbol
+    def inTpl: TemplateImpl
+    def lo = sym.info.bounds match {
+      case TypeBounds(lo, hi) if lo.typeSymbol != NothingClass =>
+        Some(makeTypeInTemplateContext(appliedType(lo, sym.info.typeParams map {_.tpe}), inTpl, sym))
+      case _ => None
+    }
+    def hi = sym.info.bounds match {
+      case TypeBounds(lo, hi) if hi.typeSymbol != AnyClass =>
+        Some(makeTypeInTemplateContext(appliedType(hi, sym.info.typeParams map {_.tpe}), inTpl, sym))
+      case _ => None
+    }
+  }
+
+  trait HigherKindedImpl extends HigherKinded {
+    def sym: Symbol
+    def inTpl: TemplateImpl
+    def typeParams =
+      sym.typeParams map (makeTypeParam(_, inTpl))
+  }
 //  /* ============== MAKER METHODS ============== */
 //
 //  /** This method makes it easier to work with the different kinds of symbols created by scalac by stripping down the
