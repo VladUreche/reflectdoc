@@ -85,7 +85,7 @@ class Settings(error: String => Unit, val printMsg: String => Unit = println(_))
     "-doc-generator",
     "class-name",
     "The fully qualified name of a doclet class, which will be used to generate the documentation",
-    "scala.tools.nsc.doc.html.Doclet"
+    "reflectdoc.tools.nsc.doc.html.Doclet"
   )
 
   val docRootContent = StringSetting (

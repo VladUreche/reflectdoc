@@ -13,7 +13,8 @@ import scala.reflect.internal.FatalError
 object ReflectDoc {
   val versionMsg = "Reflectdoc"
 
-  def createReflectionHost(settings: Settings): HostContext = ???
+  def createReflectionHost(settings: Settings): HostContext =
+    new scala.reflect.internal.hosts.RuntimeHost(getClass.getClassLoader, Array())
 
   def process(args: Array[String]): Boolean = {
     var reporter: ConsoleReporter = null
