@@ -72,14 +72,13 @@ class ModelFactory(implicit val host: HostContext, val settings: doc.Settings) {
     val universe = new Universe { thisUniverse =>
       thisFactory.universe = thisUniverse
       val settings = thisFactory.settings
-      val rootPackage = ??? // make
+      val rootPackage = modelCreation.createRootPackage
       val host: HostContext = ModelFactory.this.host
     }
     _modelFinished = true
 
-//    // complete the links between model entities, everything that couldn't have been done before
-//    TODO:
-//    universe.rootPackage.completeModel()
+    // complete the links between model entities, everything that couldn't have been done before
+    universe.rootPackage.completeModel()
 
     Some(universe)
   }
@@ -87,6 +86,9 @@ class ModelFactory(implicit val host: HostContext, val settings: doc.Settings) {
   val RootPackage = c.Term.Name("_root_")(false).defns.head
   val AnyClass = c.Term.Select(c.Term.Name("scala")(false), c.Term.Name("Any")(false)).defns.head
   val AnyRefClass = c.Term.Select(c.Term.Name("scala")(false), c.Term.Name("AnyRef")(false)).defns.head
+  val NothingClass = c.Term.Select(c.Term.Name("scala")(false), c.Term.Name("Nothing")(false)).defns.head
+  val EmptyPackage = c.Term.Name("_empty_")(false).defns.head
+  val ObjectClass = c.Term.Select(c.Term.Select(c.Term.Name("java")(false), c.Term.Name("lang")(false)), c.Term.Name("Object")(false)).defns.head
 
   // state:
   var ids = 0
@@ -101,14 +103,18 @@ class ModelFactory(implicit val host: HostContext, val settings: doc.Settings) {
   def optimize(str: String): String =
     if (str.length < 16) str.intern else str
 
+  implicit class RichMember(mbr: c.Member) {
+    def isAbstractType = mbr.isType && mbr.isAbstract
+    def isAliasType = mbr.isType && !mbr.isAbstract
+    def owner(implicit host: HostContext): c.Member.Template =
+      host.owner(mbr) match {
+        case t: c.Member.Template => t
+      }
+  }
+
   /* ============== IMPLEMENTATION PROVIDING ENTITY TYPES ============== */
 
   abstract class EntityImpl(val sym: c.Member, val inTpl: TemplateImpl) extends Entity {
-
-//    protected val sym = sym.defns match {
-//      case List(defn) => defn
-//      case _ => ???
-//    }
 
     protected val reflName: c.Name = sym match {
       case d: c.Has.Name => d.name
@@ -157,15 +163,20 @@ class ModelFactory(implicit val host: HostContext, val settings: doc.Settings) {
         if (inTpl == null)
           docTemplatesCache(RootPackage) :: Nil
         else
-          makeTemplate(sym.owner)::(sym.overrides map { inhSym => makeTemplate(inhSym.owner) })
+          makeTemplate(sym.owner) :: (sym.overrides map { inhSym => makeTemplate(inhSym.owner) }).toList
     def visibility = {
       if (sym.isPrivate) PrivateInInstance()
       else if (sym.isProtected) ProtectedInInstance()
       else {
         val qual =
-          if (sym.isPrivate || sym.isProtected)
-            Some(makeTemplate(sym.mods.collect({ case mod: c.Mod.Private => mod.within; case mod: c.Mod.Protected => mod.within }).head))
-          else
+          if (sym.isPrivate || sym.isProtected) {
+            val accessQual = sym.mods.collect({ case mod: c.Mod.Private => mod.within; case mod: c.Mod.Protected => mod.within }).flatten.head
+            val where = accessQual match {
+              case t: c.Term.This => ???
+              case n: c.Name => n.defns.head
+            }
+            Some(makeTemplate(where))
+          } else
             None
         if (sym.isPrivate) PrivateInTemplate(inTpl)
         else if (sym.isProtected) ProtectedInTemplate(qual getOrElse inTpl)
@@ -639,73 +650,77 @@ class ModelFactory(implicit val host: HostContext, val settings: doc.Settings) {
       Nil
   }
 
-//  /* ============== MAKER METHODS ============== */
-//
-//  /** This method makes it easier to work with the different kinds of symbols created by scalac by stripping down the
-//   * package object abstraction and placing members directly in the package.
-//   *
-//   * Here's the explanation of what we do. The code:
-//   *
-//   * package foo {
-//   *   object `package` {
-//   *     class Bar
-//   *   }
-//   * }
-//   *
-//   * will yield this Symbol structure:
-//   *                                       +---------+ (2)
-//   *                                       |         |
-//   * +---------------+         +---------- v ------- | ---+                              +--------+ (2)
-//   * | package foo#1 <---(1)---- module class foo#2  |    |                              |        |
-//   * +---------------+         | +------------------ | -+ |         +------------------- v ---+   |
-//   *                           | | package object foo#3 <-----(1)---- module class package#4  |   |
-//   *                           | +----------------------+ |         | +---------------------+ |   |
-//   *                           +--------------------------+         | | class package$Bar#5 | |   |
-//   *                                                                | +----------------- | -+ |   |
-//   *                                                                +------------------- | ---+   |
-//   *                                                                                     |        |
-//   *                                                                                     +--------+
-//   * (1) sourceModule
-//   * (2) you get out of owners with .owner
-//   *
-//   * and normalizeTemplate(Bar.owner) will get us the package, instead of the module class of the package object.
-//   */
-//  def normalizeTemplate(aSym: Symbol): Symbol = aSym match {
-//    case null | rootMirror.EmptyPackage | NoSymbol =>
-//      normalizeTemplate(RootPackage)
-//    case ObjectClass =>
-//      normalizeTemplate(AnyRefClass)
-//    case _ if aSym.isPackageObject =>
-//      normalizeTemplate(aSym.owner)
-//    case _ if aSym.isModuleClass =>
-//      normalizeTemplate(aSym.sourceModule)
-//    case _ =>
-//      aSym
-//  }
-//
-//  /**
-//   * These are all model construction methods. Please do not use them directly, they are calling each other recursively
-//   * starting from makeModel. On the other hand, makeTemplate, makeAnnotation, makeMember, makeType should only be used
-//   * after the model was created (modelFinished=true) otherwise assertions will start failing.
-//   */
-//  object modelCreation {
-//
-//    def createRootPackage: PackageImpl = docTemplatesCache.get(RootPackage) match {
-//      case Some(root: PackageImpl) => root
-//      case _ => modelCreation.createTemplate(RootPackage, null) match {
-//        case Some(root: PackageImpl) => root
-//        case _ => sys.error("Scaladoc: Unable to create root package!")
-//      }
-//    }
-//
-//    /**
-//     *  Create a template, either a package, class, trait or object
-//     */
-//    def createTemplate(aSym: Symbol, inTpl: DocTemplateImpl): Option[MemberImpl] = {
-//      // don't call this after the model finished!
-//      assert(!modelFinished, (aSym, inTpl))
-//
-//      def createRootPackageComment: Option[Comment] =
+  /* ============== MAKER METHODS ============== */
+
+  /** This method makes it easier to work with the different kinds of symbols created by scalac by stripping down the
+   * package object abstraction and placing members directly in the package.
+   *
+   * Here's the explanation of what we do. The code:
+   *
+   * package foo {
+   *   object `package` {
+   *     class Bar
+   *   }
+   * }
+   *
+   * will yield this Symbol structure:
+   *                                       +---------+ (2)
+   *                                       |         |
+   * +---------------+         +---------- v ------- | ---+                              +--------+ (2)
+   * | package foo#1 <---(1)---- module class foo#2  |    |                              |        |
+   * +---------------+         | +------------------ | -+ |         +------------------- v ---+   |
+   *                           | | package object foo#3 <-----(1)---- module class package#4  |   |
+   *                           | +----------------------+ |         | +---------------------+ |   |
+   *                           +--------------------------+         | | class package$Bar#5 | |   |
+   *                                                                | +----------------- | -+ |   |
+   *                                                                +------------------- | ---+   |
+   *                                                                                     |        |
+   *                                                                                     +--------+
+   * (1) sourceModule
+   * (2) you get out of owners with .owner
+   *
+   * and normalizeTemplate(Bar.owner) will get us the package, instead of the module class of the package object.
+   */
+  def normalizeTemplate(aSym: c.Member): c.Member = aSym match {
+      case null =>
+        normalizeTemplate(RootPackage)
+      case x if x == EmptyPackage =>
+        normalizeTemplate(RootPackage)
+      case ObjectClass =>
+        normalizeTemplate(AnyRefClass)
+//    Shouldn't happen:
+//      case _ if aSym.isPackageObject =>
+//        normalizeTemplate(aSym.owner)
+//      case _ if aSym.isModuleClass =>
+//        normalizeTemplate(aSym.sourceModule)
+      case _ =>
+        aSym
+    }
+
+  /**
+   * These are all model construction methods. Please do not use them directly, they are calling each other recursively
+   * starting from makeModel. On the other hand, makeTemplate, makeAnnotation, makeMember, makeType should only be used
+   * after the model was created (modelFinished=true) otherwise assertions will start failing.
+   */
+  object modelCreation {
+
+    def createRootPackage: PackageImpl = docTemplatesCache.get(RootPackage) match {
+      case Some(root: PackageImpl) => root
+      case _ => modelCreation.createTemplate(RootPackage, null) match {
+        case Some(root: PackageImpl) => root
+        case _ => sys.error("Scaladoc: Unable to create root package!")
+      }
+    }
+
+    /**
+     *  Create a template, either a package, class, trait or object
+     */
+    def createTemplate(aSym: c.Member, inTpl: DocTemplateImpl): Option[MemberImpl] = {
+      // don't call this after the model finished!
+      assert(!modelFinished, (aSym, inTpl))
+
+      def createRootPackageComment: Option[Comment] =
+        None
 //        if(settings.docRootContent.isDefault) None
 //        else {
 //          import Streamable._
@@ -717,403 +732,405 @@ class ModelFactory(implicit val host: HostContext, val settings: doc.Settings) {
 //            case _ => None
 //          }
 //        }
-//
-//      def createDocTemplate(bSym: Symbol, inTpl: DocTemplateImpl): DocTemplateImpl = {
-//        assert(!modelFinished, (bSym, inTpl)) // only created BEFORE the model is finished
-//        if (bSym.isAliasType && bSym != AnyRefClass)
-//          new DocTemplateImpl(bSym, inTpl) with AliasImpl with AliasType { override def isAliasType = true }
-//        else if (bSym.isAbstractType)
-//          new DocTemplateImpl(bSym, inTpl) with TypeBoundsImpl with AbstractType { override def isAbstractType = true }
-//        else if (bSym.isModule)
-//          new DocTemplateImpl(bSym, inTpl) with Object {}
-//        else if (bSym.isTrait)
-//          new DocTemplateImpl(bSym, inTpl) with Trait {}
-//        else if (bSym.isClass || bSym == AnyRefClass)
-//          new DocTemplateImpl(bSym, inTpl) with Class {}
-//        else
-//          sys.error("'" + bSym + "' isn't a class, trait or object thus cannot be built as a documentable template.")
-//      }
-//
-//      val bSym = normalizeTemplate(aSym)
-//      if (docTemplatesCache isDefinedAt bSym)
-//        return Some(docTemplatesCache(bSym))
-//
-//      /* Three cases of templates:
-//       * (1) root package -- special cased for bootstrapping
-//       * (2) package
-//       * (3) class/object/trait
-//       */
-//      if (bSym == RootPackage) // (1)
-//        Some(new RootPackageImpl(bSym) {
-//          override lazy val comment = createRootPackageComment
-//          override val name = "root"
-//          override def inTemplate = this
-//          override def toRoot = this :: Nil
-//          override def qualifiedName = "_root_"
-//          override def isRootPackage = true
-//          override lazy val memberSyms =
+
+      def createDocTemplate(bSym: c.Member, inTpl: DocTemplateImpl): DocTemplateImpl = {
+        assert(!modelFinished, (bSym, inTpl)) // only created BEFORE the model is finished
+        if (bSym.isAliasType && bSym != AnyRefClass)
+          new DocTemplateImpl(bSym, inTpl) with AliasImpl with AliasType { override def isAliasType = true }
+        else if (bSym.isAbstractType)
+          new DocTemplateImpl(bSym, inTpl) with TypeBoundsImpl with AbstractType { override def isAbstractType = true }
+        else if (bSym.isObject)
+          new DocTemplateImpl(bSym, inTpl) with Object {}
+        else if (bSym.isTrait)
+          new DocTemplateImpl(bSym, inTpl) with Trait {}
+        else if (bSym.isClass || bSym == AnyRefClass)
+          new DocTemplateImpl(bSym, inTpl) with Class {}
+        else
+          sys.error("'" + bSym + "' isn't a class, trait or object thus cannot be built as a documentable template.")
+      }
+
+      val bSym = normalizeTemplate(aSym)
+      if (docTemplatesCache isDefinedAt bSym)
+        return Some(docTemplatesCache(bSym))
+
+      /* Three cases of templates:
+       * (1) root package -- special cased for bootstrapping
+       * (2) package
+       * (3) class/object/trait
+       */
+      if (bSym == RootPackage) // (1)
+        Some(new RootPackageImpl(bSym) {
+          override lazy val comment = createRootPackageComment
+          override val name = "root"
+          override def inTemplate = this
+          override def toRoot = this :: Nil
+          override def qualifiedName = "_root_"
+          override def isRootPackage = true
+          override lazy val memberSyms =
+            Nil
+//            TODO:
 //            (bSym.info.members ++ EmptyPackage.info.members).toList filter { s =>
 //              s != EmptyPackage && s != RootPackage
 //            }
-//        })
-//      else if (bSym.isPackage) // (2)
-//        if (settings.skipPackage(makeQualifiedName(bSym)))
-//          None
-//        else
-//          inTpl match {
-//            case inPkg: PackageImpl =>
-//              val pack = new PackageImpl(bSym, inPkg) {}
-//              // Used to check package pruning works:
-//              //println(pack.qualifiedName)
-//              if (pack.templates.filter(_.isDocTemplate).isEmpty && pack.memberSymsLazy.isEmpty) {
-//                droppedPackages += pack
-//                None
-//              } else
-//                Some(pack)
-//            case _ =>
-//              sys.error("'" + bSym + "' must be in a package")
-//          }
-//      else {
-//        // no class inheritance at this point
-//        assert(inOriginalOwner(bSym, inTpl), bSym + " in " + inTpl)
-//        Some(createDocTemplate(bSym, inTpl))
-//      }
-//    }
-//
-//    /**
-//     *  After the model is completed, no more DocTemplateEntities are created.
-//     *  Therefore any symbol that still appears is:
-//     *   - MemberTemplateEntity (created here)
-//     *   - NoDocTemplateEntity (created in makeTemplate)
-//     */
-//    def createLazyTemplateMember(aSym: Symbol, inTpl: DocTemplateImpl): MemberImpl = {
-//
-//      // Code is duplicate because the anonymous classes are created statically
-//      def createNoDocMemberTemplate(bSym: Symbol, inTpl: DocTemplateImpl): MemberTemplateImpl = {
-//        assert(modelFinished) // only created AFTER the model is finished
-//        if (bSym.isModule || (bSym.isAliasType && bSym.tpe.typeSymbol.isModule))
-//          new MemberTemplateImpl(bSym, inTpl) with Object {}
-//        else if (bSym.isTrait || (bSym.isAliasType && bSym.tpe.typeSymbol.isTrait))
-//          new MemberTemplateImpl(bSym, inTpl) with Trait {}
-//        else if (bSym.isClass || (bSym.isAliasType && bSym.tpe.typeSymbol.isClass))
-//          new MemberTemplateImpl(bSym, inTpl) with Class {}
-//        else
-//          sys.error("'" + bSym + "' isn't a class, trait or object thus cannot be built as a member template.")
-//      }
-//
-//      assert(modelFinished)
-//      val bSym = normalizeTemplate(aSym)
-//
-//      if (docTemplatesCache isDefinedAt bSym)
-//        docTemplatesCache(bSym)
-//      else
-//        docTemplatesCache.get(bSym.owner) match {
-//          case Some(inTpl) =>
-//            val mbrs = inTpl.members.collect({ case mbr: MemberImpl if mbr.sym == bSym => mbr })
-//            assert(mbrs.length == 1)
-//            mbrs.head
-//          case _ =>
-//            // move the class completely to the new location
-//            createNoDocMemberTemplate(bSym, inTpl)
-//        }
-//    }
-//  }
-//
-//  // TODO: Should be able to override the type
-//  def makeMember(aSym: Symbol, conversion: Option[ImplicitConversionImpl], inTpl: DocTemplateImpl): List[MemberImpl] = {
-//
-//    def makeMember0(bSym: Symbol, useCaseOf: Option[MemberImpl]): Option[MemberImpl] = {
-//      if (bSym.isGetter && bSym.isLazy)
-//          Some(new NonTemplateMemberImpl(bSym, conversion, useCaseOf, inTpl) with Val {
-//            override def isLazyVal = true
-//          })
-//      else if (bSym.isGetter && bSym.accessed.isMutable)
-//        Some(new NonTemplateMemberImpl(bSym, conversion, useCaseOf, inTpl) with Val {
-//          override def isVar = true
-//        })
-//      else if (bSym.isMethod && !bSym.hasAccessorFlag && !bSym.isConstructor && !bSym.isModule) {
-//        val cSym = { // This unsightly hack closes issue #4086.
-//          if (bSym == definitions.Object_synchronized) {
-//            val cSymInfo = (bSym.info: @unchecked) match {
-//              case PolyType(ts, MethodType(List(bp), mt)) =>
-//                val cp = bp.cloneSymbol.setPos(bp.pos).setInfo(definitions.byNameType(bp.info))
-//                PolyType(ts, MethodType(List(cp), mt))
-//            }
-//            bSym.cloneSymbol.setPos(bSym.pos).setInfo(cSymInfo)
-//          }
-//          else bSym
-//        }
-//        Some(new NonTemplateParamMemberImpl(cSym, conversion, useCaseOf, inTpl) with HigherKindedImpl with Def {
-//          override def isDef = true
-//        })
-//      }
-//      else if (bSym.isConstructor)
-//        if (conversion.isDefined)
-//          None // don't list constructors inherted by implicit conversion
-//        else
-//          Some(new NonTemplateParamMemberImpl(bSym, conversion, useCaseOf, inTpl) with Constructor {
-//            override def isConstructor = true
-//            def isPrimary = sym.isPrimaryConstructor
-//          })
-//      else if (bSym.isGetter) // Scala field accessor or Java field
-//        Some(new NonTemplateMemberImpl(bSym, conversion, useCaseOf, inTpl) with Val {
-//          override def isVal = true
-//        })
-//      else if (bSym.isAbstractType && !typeShouldDocument(bSym, inTpl))
-//        Some(new MemberTemplateImpl(bSym, inTpl) with TypeBoundsImpl with AbstractType {
-//          override def isAbstractType = true
-//        })
-//      else if (bSym.isAliasType && !typeShouldDocument(bSym, inTpl))
-//        Some(new MemberTemplateImpl(bSym, inTpl) with AliasImpl with AliasType {
-//          override def isAliasType = true
-//        })
-//      else if (!modelFinished && (bSym.isPackage || templateShouldDocument(bSym, inTpl)))
-//        modelCreation.createTemplate(bSym, inTpl)
-//      else
-//        None
-//    }
-//
-//    if (!localShouldDocument(aSym) || aSym.isModuleClass || aSym.isPackageObject || aSym.isMixinConstructor)
-//      Nil
-//    else {
-//      val allSyms = useCases(aSym, inTpl.sym) map { case (bSym, bComment, bPos) =>
-//        docComments.put(bSym, DocComment(bComment, bPos)) // put the comment in the list, don't parse it yet, closes SI-4898
-//        bSym
-//      }
-//
-//      val member = makeMember0(aSym, None)
-//      if (allSyms.isEmpty)
-//        member.toList
-//      else
-//        // Use cases replace the original definitions - SI-5054
-//        allSyms flatMap { makeMember0(_, member) }
-//    }
-//  }
-//
-//  def findMember(aSym: Symbol, inTpl: DocTemplateImpl): Option[MemberImpl] = {
-//    normalizeTemplate(aSym.owner)
-//    inTpl.members.find(_.sym == aSym)
-//  }
-//
-//  def findTemplateMaybe(aSym: Symbol): Option[DocTemplateImpl] = {
-//    assert(modelFinished)
-//    docTemplatesCache.get(normalizeTemplate(aSym)).filterNot(packageDropped(_))
-//  }
-//
-//  def makeTemplate(aSym: Symbol): TemplateImpl = makeTemplate(aSym, None)
-//
-//  def makeTemplate(aSym: Symbol, inTpl: Option[TemplateImpl]): TemplateImpl = {
-//    assert(modelFinished)
-//
-//    def makeNoDocTemplate(aSym: Symbol, inTpl: TemplateImpl): NoDocTemplateImpl =
-//      noDocTemplatesCache getOrElse (aSym, new NoDocTemplateImpl(aSym, inTpl))
-//
-//    findTemplateMaybe(aSym) getOrElse {
-//      val bSym = normalizeTemplate(aSym)
-//      makeNoDocTemplate(bSym, inTpl getOrElse makeTemplate(bSym.owner))
-//    }
-//  }
-//
-//  def makeAnnotation(annot: AnnotationInfo): scala.tools.nsc.doc.model.Annotation = {
-//    val aSym = annot.symbol
-//    new EntityImpl(aSym, makeTemplate(aSym.owner)) with scala.tools.nsc.doc.model.Annotation {
-//      lazy val annotationClass =
-//        makeTemplate(annot.symbol)
-//      val arguments = {
-//        val paramsOpt: Option[List[ValueParam]] = annotationClass match {
-//          case aClass: DocTemplateEntity with Class =>
-//            val constr = aClass.constructors collectFirst {
-//              case c: MemberImpl if c.sym == annot.original.symbol => c
-//            }
-//            constr flatMap (_.valueParams.headOption)
-//          case _ => None
-//        }
-//        val argTrees = annot.args map makeTree
-//        paramsOpt match {
-//          case Some (params) =>
-//            params zip argTrees map { case (param, tree) =>
-//              new ValueArgument {
-//                def parameter = Some(param)
-//                def value = tree
-//              }
-//            }
-//          case None =>
-//            argTrees map { tree =>
-//              new ValueArgument {
-//                def parameter = None
-//                def value = tree
-//              }
-//            }
-//        }
-//      }
-//    }
-//  }
-//
-//  /** */
-//  def makeTypeParam(aSym: Symbol, inTpl: TemplateImpl): TypeParam =
-//    new ParameterImpl(aSym, inTpl) with TypeBoundsImpl with HigherKindedImpl with TypeParam {
-//      def variance: String = {
-//        if (sym hasFlag Flags.COVARIANT) "+"
-//        else if (sym hasFlag Flags.CONTRAVARIANT) "-"
-//        else ""
-//      }
-//    }
-//
-//  /** */
-//  def makeValueParam(aSym: Symbol, inTpl: DocTemplateImpl): ValueParam = {
-//    makeValueParam(aSym, inTpl, aSym.nameString)
-//  }
-//
-//
-//  /** */
-//  def makeValueParam(aSym: Symbol, inTpl: DocTemplateImpl, newName: String): ValueParam =
-//    new ParameterImpl(aSym, inTpl) with ValueParam {
-//      override val name = newName
-//      def defaultValue =
-//        if (aSym.hasDefault) {
-//          // units.filter should return only one element
-//          (currentRun.units filter (_.source.file == aSym.sourceFile)).toList match {
-//            case List(unit) =>
-//              // SI-4922 `sym == aSym` is insufficent if `aSym` is a clone of symbol
-//              //         of the parameter in the tree, as can happen with type parametric methods.
-//              def isCorrespondingParam(sym: Symbol) = (
-//                sym != null &&
-//                sym != NoSymbol &&
-//                sym.owner == aSym.owner &&
-//                sym.name == aSym.name &&
-//                sym.isParamWithDefault
-//              )
-//              unit.body find (t => isCorrespondingParam(t.symbol)) collect {
-//                case ValDef(_,_,_,rhs) if rhs ne EmptyTree  => makeTree(rhs)
-//              }
-//            case _ => None
-//          }
-//        }
-//        else None
-//      def resultType =
-//        makeTypeInTemplateContext(aSym.tpe, inTpl, aSym)
-//      def isImplicit = aSym.isImplicit
-//    }
-//
-//  /** */
-//  def makeTypeInTemplateContext(aType: Type, inTpl: TemplateImpl, dclSym: Symbol): TypeEntity = {
-//    def ownerTpl(sym: Symbol): Symbol =
-//      if (sym.isClass || sym.isModule || sym == NoSymbol) sym else ownerTpl(sym.owner)
-//    val tpe =
-//      if (thisFactory.settings.useStupidTypes) aType else {
-//        def ownerTpl(sym: Symbol): Symbol =
-//          if (sym.isClass || sym.isModule || sym == NoSymbol) sym else ownerTpl(sym.owner)
-//        val fixedSym = if (inTpl.sym.isModule) inTpl.sym.moduleClass else inTpl.sym
-//        aType.asSeenFrom(fixedSym.thisType, ownerTpl(dclSym))
-//      }
-//    makeType(tpe, inTpl)
-//  }
-//
-//  /** Get the types of the parents of the current class, ignoring the refinements */
-//  def makeParentTypes(aType: Type, tpl: Option[MemberTemplateImpl], inTpl: TemplateImpl): List[(TemplateEntity, TypeEntity)] = aType match {
-//    case RefinedType(parents, defs) =>
-//      val ignoreParents = Set[Symbol](AnyClass, AnyRefClass, ObjectClass)
-//      val filtParents =
-//        // we don't want to expose too many links to AnyRef, that will just be redundant information
-//        tpl match {
-//          case Some(tpl) if (!tpl.sym.isModule && parents.length < 2) || (tpl.sym == AnyValClass) || (tpl.sym == AnyRefClass) || (tpl.sym == AnyClass) => parents
-//          case _ => parents.filterNot((p: Type) => ignoreParents(p.typeSymbol))
-//        }
-//
-//      /** Returns:
-//       *   - a DocTemplate if the type's symbol is documented
-//       *   - a NoDocTemplateMember if the type's symbol is not documented in its parent but in another template
-//       *   - a NoDocTemplate if the type's symbol is not documented at all */
-//      def makeTemplateOrMemberTemplate(parent: Type): TemplateImpl = {
-//        def noDocTemplate = makeTemplate(parent.typeSymbol)
-//        findTemplateMaybe(parent.typeSymbol) match {
-//          case Some(tpl) => tpl
-//          case None => parent match {
-//            case TypeRef(pre, sym, args) =>
-//              findTemplateMaybe(pre.typeSymbol) match {
-//                case Some(tpl) => findMember(parent.typeSymbol, tpl).collect({case t: TemplateImpl => t}).getOrElse(noDocTemplate)
-//                case None => noDocTemplate
-//              }
-//            case _ => noDocTemplate
-//          }
-//        }
-//      }
-//
-//      filtParents.map(parent => {
-//        val templateEntity = makeTemplateOrMemberTemplate(parent)
-//        val typeEntity = makeType(parent, inTpl)
-//        (templateEntity, typeEntity)
-//      })
-//    case _ =>
-//      List((makeTemplate(aType.typeSymbol), makeType(aType, inTpl)))
-//  }
-//
-//  def makeQualifiedName(sym: Symbol, relativeTo: Option[Symbol] = None): String = {
-//    val stop = relativeTo map (_.ownerChain.toSet) getOrElse Set[Symbol]()
-//    var sym1 = sym
-//    val path = new StringBuilder()
-//    // var path = List[Symbol]()
-//
-//    while ((sym1 != NoSymbol) && (path.isEmpty || !stop(sym1))) {
-//      val sym1Norm = normalizeTemplate(sym1)
-//      if (!sym1.sourceModule.isPackageObject && sym1Norm != RootPackage) {
-//        if (path.length != 0)
-//          path.insert(0, ".")
-//        path.insert(0, sym1Norm.nameString)
-//        // path::= sym1Norm
-//      }
-//      sym1 = sym1.owner
-//    }
-//
-//    optimize(path.toString)
-//    //path.mkString(".")
-//  }
-//
-//  def inOriginalOwner(aSym: Symbol, inTpl: TemplateImpl): Boolean =
-//    normalizeTemplate(aSym.owner) == normalizeTemplate(inTpl.sym)
-//
-//  def templateShouldDocument(aSym: Symbol, inTpl: DocTemplateImpl): Boolean =
-//    (aSym.isTrait || aSym.isClass || aSym.isModule || typeShouldDocument(aSym, inTpl)) &&
-//    localShouldDocument(aSym) &&
-//    !isEmptyJavaObject(aSym) &&
-//    // either it's inside the original owner or we can document it later:
-//    (!inOriginalOwner(aSym, inTpl) || (aSym.isPackageClass || (aSym.sourceFile != null)))
-//
-//  def membersShouldDocument(sym: Symbol, inTpl: TemplateImpl) = {
-//    // pruning modules that shouldn't be documented
-//    // Why Symbol.isInitialized? Well, because we need to avoid exploring all the space available to scaladoc
-//    // from the classpath -- scaladoc is a hog, it will explore everything starting from the root package unless we
-//    // somehow prune the tree. And isInitialized is a good heuristic for prunning -- if the package was not explored
-//    // during typer and refchecks, it's not necessary for the current application and there's no need to explore it.
-//    (!sym.isModule || sym.moduleClass.isInitialized) &&
-//    // documenting only public and protected members
-//    localShouldDocument(sym) &&
-//    // Only this class's constructors are part of its members, inherited constructors are not.
-//    (!sym.isConstructor || sym.owner == inTpl.sym) &&
-//    // If the @bridge annotation overrides a normal member, show it
-//    !isPureBridge(sym)
-//  }
-//
-//  def isEmptyJavaObject(aSym: Symbol): Boolean =
-//    aSym.isModule && aSym.isJavaDefined &&
-//    aSym.info.members.exists(s => localShouldDocument(s) && (!s.isConstructor || s.owner == aSym))
-//
-//  def localShouldDocument(aSym: Symbol): Boolean =
-//    !aSym.isPrivate && (aSym.isProtected || aSym.privateWithin == NoSymbol) && !aSym.isSynthetic
-//
-//  /** Filter '@bridge' methods only if *they don't override non-bridge methods*. See SI-5373 for details */
-//  def isPureBridge(sym: Symbol) = sym.isBridge && sym.allOverriddenSymbols.forall(_.isBridge)
-//
-//  // the classes that are excluded from the index should also be excluded from the diagrams
-//  def classExcluded(clazz: TemplateEntity): Boolean = settings.hardcoded.isExcluded(clazz.qualifiedName)
-//
-//  // the implicit conversions that are excluded from the pages should not appear in the diagram
-//  def implicitExcluded(convertorMethod: String): Boolean = settings.hiddenImplicits(convertorMethod)
-//
-//  // whether or not to create a page for an {abstract,alias} type
-//  def typeShouldDocument(bSym: Symbol, inTpl: DocTemplateImpl) =
-//    (settings.docExpandAllTypes && (bSym.sourceFile != null)) ||
-//    (bSym.isAliasType || bSym.isAbstractType) &&
-//    { val rawComment = global.expandedDocComment(bSym, inTpl.sym)
-//      rawComment.contains("@template") || rawComment.contains("@documentable") }
+        })
+      else if (bSym.isPkg) // (2)
+        if (settings.skipPackage(makeQualifiedName(bSym)))
+          None
+        else
+          inTpl match {
+            case inPkg: PackageImpl =>
+              val pack = new PackageImpl(bSym, inPkg) {}
+              // Used to check package pruning works:
+              //println(pack.qualifiedName)
+              if (pack.templates.filter(_.isDocTemplate).isEmpty && pack.memberSymsLazy.isEmpty) {
+                droppedPackages += pack
+                None
+              } else
+                Some(pack)
+            case _ =>
+              sys.error("'" + bSym + "' must be in a package")
+          }
+      else {
+        // no class inheritance at this point
+        assert(inOriginalOwner(bSym, inTpl), bSym + " in " + inTpl)
+        Some(createDocTemplate(bSym, inTpl))
+      }
+    }
+
+    /**
+     *  After the model is completed, no more DocTemplateEntities are created.
+     *  Therefore any c.Member that still appears is:
+     *   - MemberTemplateEntity (created here)
+     *   - NoDocTemplateEntity (created in makeTemplate)
+     */
+    def createLazyTemplateMember(aSym: c.Member, inTpl: DocTemplateImpl): MemberImpl = {
+
+      // Code is duplicate because the anonymous classes are created statically
+      def createNoDocMemberTemplate(bSym: c.Member, inTpl: DocTemplateImpl): MemberTemplateImpl = {
+        assert(modelFinished) // only created AFTER the model is finished
+        if (bSym.isObject) // || (bSym.isAliasType && bSym.tpe.typeSymbol.isModule))
+          new MemberTemplateImpl(bSym, inTpl) with Object {}
+        else if (bSym.isTrait) // || (bSym.isAliasType && bSym.tpe.typeSymbol.isTrait))
+          new MemberTemplateImpl(bSym, inTpl) with Trait {}
+        else if (bSym.isClass) // || (bSym.isAliasType && bSym.tpe.typeSymbol.isClass))
+          new MemberTemplateImpl(bSym, inTpl) with Class {}
+        else
+          sys.error("'" + bSym + "' isn't a class, trait or object thus cannot be built as a member template.")
+      }
+
+      assert(modelFinished)
+      val bSym = normalizeTemplate(aSym)
+
+      if (docTemplatesCache isDefinedAt bSym)
+        docTemplatesCache(bSym)
+      else
+        docTemplatesCache.get(bSym.owner) match {
+          case Some(inTpl) =>
+            val mbrs = inTpl.members.collect({ case mbr: MemberImpl if mbr.sym == bSym => mbr })
+            assert(mbrs.length == 1)
+            mbrs.head
+          case _ =>
+            // move the class completely to the new location
+            createNoDocMemberTemplate(bSym, inTpl)
+        }
+    }
+  }
+
+  // TODO: Should be able to override the type
+  def makeMember(aSym: c.Member, conversion: Option[ImplicitConversionImpl], inTpl: DocTemplateImpl): List[MemberImpl] = {
+
+    def makeMember0(bSym: c.Member, useCaseOf: Option[MemberImpl]): Option[MemberImpl] = {
+      if (bSym.isGetter && bSym.isLazy)
+          Some(new NonTemplateMemberImpl(bSym, conversion, useCaseOf, inTpl) with Val {
+            override def isLazyVal = true
+          })
+      else if (bSym.isGetter && bSym.accessed.isMutable)
+        Some(new NonTemplateMemberImpl(bSym, conversion, useCaseOf, inTpl) with Val {
+          override def isVar = true
+        })
+      else if (bSym.isMethod && !bSym.hasAccessorFlag && !bSym.isConstructor && !bSym.isModule) {
+        val cSym = { // This unsightly hack closes issue #4086.
+          if (bSym == definitions.Object_synchronized) {
+            val cSymInfo = (bSym.info: @unchecked) match {
+              case PolyType(ts, MethodType(List(bp), mt)) =>
+                val cp = bp.clonec.Member.setPos(bp.pos).setInfo(definitions.byNameType(bp.info))
+                PolyType(ts, MethodType(List(cp), mt))
+            }
+            bSym.clonec.Member.setPos(bSym.pos).setInfo(cSymInfo)
+          }
+          else bSym
+        }
+        Some(new NonTemplateParamMemberImpl(cSym, conversion, useCaseOf, inTpl) with HigherKindedImpl with Def {
+          override def isDef = true
+        })
+      }
+      else if (bSym.isConstructor)
+        if (conversion.isDefined)
+          None // don't list constructors inherted by implicit conversion
+        else
+          Some(new NonTemplateParamMemberImpl(bSym, conversion, useCaseOf, inTpl) with Constructor {
+            override def isConstructor = true
+            def isPrimary = sym.isPrimaryConstructor
+          })
+      else if (bSym.isGetter) // Scala field accessor or Java field
+        Some(new NonTemplateMemberImpl(bSym, conversion, useCaseOf, inTpl) with Val {
+          override def isVal = true
+        })
+      else if (bSym.isAbstractType && !typeShouldDocument(bSym, inTpl))
+        Some(new MemberTemplateImpl(bSym, inTpl) with TypeBoundsImpl with AbstractType {
+          override def isAbstractType = true
+        })
+      else if (bSym.isAliasType && !typeShouldDocument(bSym, inTpl))
+        Some(new MemberTemplateImpl(bSym, inTpl) with AliasImpl with AliasType {
+          override def isAliasType = true
+        })
+      else if (!modelFinished && (bSym.isPackage || templateShouldDocument(bSym, inTpl)))
+        modelCreation.createTemplate(bSym, inTpl)
+      else
+        None
+    }
+
+    if (!localShouldDocument(aSym) || aSym.isModuleClass || aSym.isPackageObject || aSym.isMixinConstructor)
+      Nil
+    else {
+      val allSyms = useCases(aSym, inTpl.sym) map { case (bSym, bComment, bPos) =>
+        docComments.put(bSym, DocComment(bComment, bPos)) // put the comment in the list, don't parse it yet, closes SI-4898
+        bSym
+      }
+
+      val member = makeMember0(aSym, None)
+      if (allSyms.isEmpty)
+        member.toList
+      else
+        // Use cases replace the original definitions - SI-5054
+        allSyms flatMap { makeMember0(_, member) }
+    }
+  }
+
+  def findMember(aSym: c.Member, inTpl: DocTemplateImpl): Option[MemberImpl] = {
+    normalizeTemplate(aSym.owner)
+    inTpl.members.find(_.sym == aSym)
+  }
+
+  def findTemplateMaybe(aSym: c.Member): Option[DocTemplateImpl] = {
+    assert(modelFinished)
+    docTemplatesCache.get(normalizeTemplate(aSym)).filterNot(packageDropped(_))
+  }
+
+  def makeTemplate(aSym: c.Member): TemplateImpl = makeTemplate(aSym, None)
+
+  def makeTemplate(aSym: c.Member, inTpl: Option[TemplateImpl]): TemplateImpl = {
+    assert(modelFinished)
+
+    def makeNoDocTemplate(aSym: c.Member, inTpl: TemplateImpl): NoDocTemplateImpl =
+      noDocTemplatesCache getOrElse (aSym, new NoDocTemplateImpl(aSym, inTpl))
+
+    findTemplateMaybe(aSym) getOrElse {
+      val bSym = normalizeTemplate(aSym)
+      makeNoDocTemplate(bSym, inTpl getOrElse makeTemplate(bSym.owner))
+    }
+  }
+
+  def makeAnnotation(annot: AnnotationInfo): scala.tools.nsc.doc.model.Annotation = {
+    val aSym = annot.c.Member
+    new EntityImpl(aSym, makeTemplate(aSym.owner)) with scala.tools.nsc.doc.model.Annotation {
+      lazy val annotationClass =
+        makeTemplate(annot.c.Member)
+      val arguments = {
+        val paramsOpt: Option[List[ValueParam]] = annotationClass match {
+          case aClass: DocTemplateEntity with Class =>
+            val constr = aClass.constructors collectFirst {
+              case c: MemberImpl if c.sym == annot.original.c.Member => c
+            }
+            constr flatMap (_.valueParams.headOption)
+          case _ => None
+        }
+        val argTrees = annot.args map makeTree
+        paramsOpt match {
+          case Some (params) =>
+            params zip argTrees map { case (param, tree) =>
+              new ValueArgument {
+                def parameter = Some(param)
+                def value = tree
+              }
+            }
+          case None =>
+            argTrees map { tree =>
+              new ValueArgument {
+                def parameter = None
+                def value = tree
+              }
+            }
+        }
+      }
+    }
+  }
+
+  /** */
+  def makeTypeParam(aSym: c.Member, inTpl: TemplateImpl): TypeParam =
+    new ParameterImpl(aSym, inTpl) with TypeBoundsImpl with HigherKindedImpl with TypeParam {
+      def variance: String = {
+        if (sym hasFlag Flags.COVARIANT) "+"
+        else if (sym hasFlag Flags.CONTRAVARIANT) "-"
+        else ""
+      }
+    }
+
+  /** */
+  def makeValueParam(aSym: c.Member, inTpl: DocTemplateImpl): ValueParam = {
+    makeValueParam(aSym, inTpl, aSym.nameString)
+  }
+
+
+  /** */
+  def makeValueParam(aSym: c.Member, inTpl: DocTemplateImpl, newName: String): ValueParam =
+    new ParameterImpl(aSym, inTpl) with ValueParam {
+      override val name = newName
+      def defaultValue =
+        if (aSym.hasDefault) {
+          // units.filter should return only one element
+          (currentRun.units filter (_.source.file == aSym.sourceFile)).toList match {
+            case List(unit) =>
+              // SI-4922 `sym == aSym` is insufficent if `aSym` is a clone of c.Member
+              //         of the parameter in the tree, as can happen with type parametric methods.
+              def isCorrespondingParam(sym: c.Member) = (
+                sym != null &&
+                sym != Noc.Member &&
+                sym.owner == aSym.owner &&
+                sym.name == aSym.name &&
+                sym.isParamWithDefault
+              )
+              unit.body find (t => isCorrespondingParam(t.c.Member)) collect {
+                case ValDef(_,_,_,rhs) if rhs ne EmptyTree  => makeTree(rhs)
+              }
+            case _ => None
+          }
+        }
+        else None
+      def resultType =
+        makeTypeInTemplateContext(aSym.tpe, inTpl, aSym)
+      def isImplicit = aSym.isImplicit
+    }
+
+  /** */
+  def makeTypeInTemplateContext(aType: Type, inTpl: TemplateImpl, dclSym: c.Member): TypeEntity = {
+    def ownerTpl(sym: c.Member): c.Member =
+      if (sym.isClass || sym.isModule || sym == Noc.Member) sym else ownerTpl(sym.owner)
+    val tpe =
+      if (thisFactory.settings.useStupidTypes) aType else {
+        def ownerTpl(sym: c.Member): c.Member =
+          if (sym.isClass || sym.isModule || sym == Noc.Member) sym else ownerTpl(sym.owner)
+        val fixedSym = if (inTpl.sym.isModule) inTpl.sym.moduleClass else inTpl.sym
+        aType.asSeenFrom(fixedSym.thisType, ownerTpl(dclSym))
+      }
+    makeType(tpe, inTpl)
+  }
+
+  /** Get the types of the parents of the current class, ignoring the refinements */
+  def makeParentTypes(aType: Type, tpl: Option[MemberTemplateImpl], inTpl: TemplateImpl): List[(TemplateEntity, TypeEntity)] = aType match {
+    case RefinedType(parents, defs) =>
+      val ignoreParents = Set[c.Member](AnyClass, AnyRefClass, ObjectClass)
+      val filtParents =
+        // we don't want to expose too many links to AnyRef, that will just be redundant information
+        tpl match {
+          case Some(tpl) if (!tpl.sym.isModule && parents.length < 2) || (tpl.sym == AnyValClass) || (tpl.sym == AnyRefClass) || (tpl.sym == AnyClass) => parents
+          case _ => parents.filterNot((p: Type) => ignoreParents(p.typec.Member))
+        }
+
+      /** Returns:
+       *   - a DocTemplate if the type's c.Member is documented
+       *   - a NoDocTemplateMember if the type's c.Member is not documented in its parent but in another template
+       *   - a NoDocTemplate if the type's c.Member is not documented at all */
+      def makeTemplateOrMemberTemplate(parent: Type): TemplateImpl = {
+        def noDocTemplate = makeTemplate(parent.typec.Member)
+        findTemplateMaybe(parent.typec.Member) match {
+          case Some(tpl) => tpl
+          case None => parent match {
+            case TypeRef(pre, sym, args) =>
+              findTemplateMaybe(pre.typec.Member) match {
+                case Some(tpl) => findMember(parent.typec.Member, tpl).collect({case t: TemplateImpl => t}).getOrElse(noDocTemplate)
+                case None => noDocTemplate
+              }
+            case _ => noDocTemplate
+          }
+        }
+      }
+
+      filtParents.map(parent => {
+        val templateEntity = makeTemplateOrMemberTemplate(parent)
+        val typeEntity = makeType(parent, inTpl)
+        (templateEntity, typeEntity)
+      })
+    case _ =>
+      List((makeTemplate(aType.typec.Member), makeType(aType, inTpl)))
+  }
+
+  def makeQualifiedName(sym: c.Member, relativeTo: Option[c.Member] = None): String = {
+    val stop = relativeTo map (_.ownerChain.toSet) getOrElse Set[c.Member]()
+    var sym1 = sym
+    val path = new StringBuilder()
+    // var path = List[c.Member]()
+
+    while ((sym1 != Noc.Member) && (path.isEmpty || !stop(sym1))) {
+      val sym1Norm = normalizeTemplate(sym1)
+      if (!sym1.sourceModule.isPackageObject && sym1Norm != RootPackage) {
+        if (path.length != 0)
+          path.insert(0, ".")
+        path.insert(0, sym1Norm.nameString)
+        // path::= sym1Norm
+      }
+      sym1 = sym1.owner
+    }
+
+    optimize(path.toString)
+    //path.mkString(".")
+  }
+
+  def inOriginalOwner(aSym: c.Member, inTpl: TemplateImpl): Boolean =
+    normalizeTemplate(aSym.owner) == normalizeTemplate(inTpl.sym)
+
+  def templateShouldDocument(aSym: c.Member, inTpl: DocTemplateImpl): Boolean =
+    (aSym.isTrait || aSym.isClass || aSym.isModule || typeShouldDocument(aSym, inTpl)) &&
+    localShouldDocument(aSym) &&
+    !isEmptyJavaObject(aSym) &&
+    // either it's inside the original owner or we can document it later:
+    (!inOriginalOwner(aSym, inTpl) || (aSym.isPackageClass || (aSym.sourceFile != null)))
+
+  def membersShouldDocument(sym: c.Member, inTpl: TemplateImpl) = {
+    // pruning modules that shouldn't be documented
+    // Why c.Member.isInitialized? Well, because we need to avoid exploring all the space available to scaladoc
+    // from the classpath -- scaladoc is a hog, it will explore everything starting from the root package unless we
+    // somehow prune the tree. And isInitialized is a good heuristic for prunning -- if the package was not explored
+    // during typer and refchecks, it's not necessary for the current application and there's no need to explore it.
+    (!sym.isModule || sym.moduleClass.isInitialized) &&
+    // documenting only public and protected members
+    localShouldDocument(sym) &&
+    // Only this class's constructors are part of its members, inherited constructors are not.
+    (!sym.isConstructor || sym.owner == inTpl.sym) &&
+    // If the @bridge annotation overrides a normal member, show it
+    !isPureBridge(sym)
+  }
+
+  def isEmptyJavaObject(aSym: c.Member): Boolean =
+    aSym.isModule && aSym.isJavaDefined &&
+    aSym.info.members.exists(s => localShouldDocument(s) && (!s.isConstructor || s.owner == aSym))
+
+  def localShouldDocument(aSym: c.Member): Boolean =
+    !aSym.isPrivate && (aSym.isProtected || aSym.privateWithin == Noc.Member) && !aSym.isSynthetic
+
+  /** Filter '@bridge' methods only if *they don't override non-bridge methods*. See SI-5373 for details */
+  def isPureBridge(sym: c.Member) = sym.isBridge && sym.allOverriddenc.Members.forall(_.isBridge)
+
+  // the classes that are excluded from the index should also be excluded from the diagrams
+  def classExcluded(clazz: TemplateEntity): Boolean = settings.hardcoded.isExcluded(clazz.qualifiedName)
+
+  // the implicit conversions that are excluded from the pages should not appear in the diagram
+  def implicitExcluded(convertorMethod: String): Boolean = settings.hiddenImplicits(convertorMethod)
+
+  // whether or not to create a page for an {abstract,alias} type
+  def typeShouldDocument(bSym: c.Member, inTpl: DocTemplateImpl) =
+    (settings.docExpandAllTypes && (bSym.sourceFile != null)) ||
+    (bSym.isAliasType || bSym.isAbstractType) &&
+    { val rawComment = global.expandedDocComment(bSym, inTpl.sym)
+      rawComment.contains("@template") || rawComment.contains("@documentable") }
 }
