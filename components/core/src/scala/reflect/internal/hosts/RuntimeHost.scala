@@ -197,16 +197,17 @@ trait RuntimeHostCrappyPart extends HostContext {
   }
 
   implicit object ConvertThisType extends Converter[ThisType, p.Type.Singleton] {
-    def convert(tref: ThisType): p.Type = tref match {
+    def convert(tref: ThisType): p.Type.Singleton = tref match {
       case ThisType(sym) =>
         // TODO: infer whether thistpe originally corresponded to Some or None
-        p.Type.Singleton(conv[This, p.Term.Ref](This(sym.name.toTypeName)))
+//        p.Type.Singleton(conv[This, p.Term.Ref](This(sym.name.toTypeName)))
+        ???
     }
   }
 
 //      case SuperType(thistpe, supertpe) =>
   implicit object ConvertSuperType extends Converter[SuperType, p.Type.Singleton] {
-    def convert(tref: SuperType): p.Type = tref match {
+    def convert(tref: SuperType): p.Type.Singleton = tref match {
       case SuperType(thistpe, supertpe) =>
         val p.Type.Singleton(p.Term.This(pthis)) = conv[Type, p.Type](thistpe)
         require(supertpe.typeSymbol.isType)
@@ -271,6 +272,8 @@ class RuntimeHost(val classloader: ClassLoader, args: Array[String]) extends Run
   def members(scope: p.Scope): Seq[p.Member] = Nil
   def members(scope: p.Scope, name: p.Name): Seq[p.Member] = Nil
   def ctors(scope: p.Scope): Seq[p.Ctor] = Nil
+
+  def owner(term: p.Tree): p.Scope = ???
 
   def defn(term: p.Term.Ref): Seq[p.Member.Term] = term match {
     case p.Term.Name(name) =>

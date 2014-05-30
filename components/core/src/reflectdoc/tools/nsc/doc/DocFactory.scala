@@ -45,7 +45,7 @@ class DocFactory(val host: HostContext, val reporter: Reporter, val settings: do
       return None
 
     val modelFactory = (
-        new model.ModelFactory(settings)
+        new model.ModelFactory()(host, settings)
         with model.ModelFactoryImplicitSupport
         with model.ModelFactoryTypeSupport
         with model.diagram.DiagramFactory
